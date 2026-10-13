@@ -1,39 +1,36 @@
 # Stato
 
-**Tappa corrente:** il cuore del programma è in piedi — analisi con Ollama, archivio SQLite, veste grafica.
-**Prossimo task:** la schermata **Archivio e cronologia** (vedere le analisi salvate), poi il **batch**.
+**Tappa corrente:** le funzioni principali sono in piedi (analisi, archivio, statistiche, raccolte, setup, batch, PDF, import).
+**Prossimo task:** canale di controllo (T8), sincronizzazione cartelle (T5), XMP.
 
 ## Fatto
-- Regole e standard in italiano; architettura, piano e documenti di avanzamento.
-- Workspace Cargo con 8 crate stratificati (L0–L5) + il binario `postcritica`; `xtask` con i gate.
-- Licenza MIT OR Apache-2.0; repository collegato a `origin` (`bombino-60/Postcritica`).
-- **Analisi di una foto con Ollama** (`gemma3:4b` predefinito, modificabile dalla barra): il report
-  (punteggio, tag, punti di forza e debolezza) compare a destra ed è **salvato in SQLite**.
-- **Libreria**: griglia di miniature (da una cartella o dalla demo), ispettore con **metadati EXIF** e
-  **profilo visivo**.
-- **Veste grafica della tua app**: palette scura con i tuoi colori.
-- `raster` (decodifica/miniatura/PNG), `metadata` (EXIF), `ai` (Ollama + report), `archive` (SQLite),
-  `engine` (ispezione e analisi), `report` (CSV/JSON) — tutte con test.
+- Regole e standard in italiano; architettura, piano, documenti; repository su GitHub.
+- **Analisi** con Ollama (locale) e ChatGPT (OpenAI): report con punteggio, tag, forze, debolezze.
+- **Archivio SQLite** (rusqlite): analisi, impostazioni, valutazione a stelle, import dal database Python.
+- **Batch**: «Analizza tutte» con barra di avanzamento.
+- **Libreria** (griglia per data, EXIF, profilo visivo), **Statistiche** (4 grafici), **Raccolte per tag**,
+  **Setup** (provider/modelli/chiave).
+- **Esporta PDF** scritto a mano (niente dipendenze).
+- Veste grafica con i **colori e le misure del riferimento LightCraft**.
 - **Eseguibile release** in `dist/postcritica.exe`.
 
 ## In corso
-- Nulla di aperto: la fetta è chiusa e committata.
+- Nulla di aperto: l'ultimo blocco è chiuso e committato.
 
 ## Blocchi
 - Nessuno.
 
 ## Assunzioni registrate
-- Interfaccia: app desktop nativa egui/eframe, con la palette della tua app.
+- Interfaccia: app desktop nativa egui/eframe, con il tema del riferimento.
 - Codice: commenti/stringhe in italiano, identificatori in inglese.
-- Provider AI: **Ollama** collegato (modello predefinito `gemma3:4b`); ChatGPT/OpenAI dietro la stessa
-  interfaccia, più avanti.
+- Provider AI: Ollama e ChatGPT, scelti nel Setup; la chiave OpenAI resta nell'archivio locale.
 - SQLite è l'unica dipendenza nativa ammessa.
-- Obiettivo di fase: **parità funzionale** col Python.
+- Obiettivo di fase: parità funzionale col Python (55% secondo la checklist).
 
 ## Metriche
 - Test: unitari verdi; test d'integrazione reale con Ollama (`--ignored`).
 - Eseguibile release: ~12 MB.
 
 ## Decisioni del proprietario in sospeso
-- Se introdurre il canale di controllo e MCP (tappa T8).
+- Canale di controllo e MCP (tappa T8).
 - Nome delle crate: al momento `postcritica-*`.
