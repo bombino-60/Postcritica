@@ -25,6 +25,8 @@ pub struct PhotoMetadata {
     pub aperture: Option<f64>,
     pub shutter: Option<String>,
     pub focal_mm: Option<f64>,
+    /// La data di scatto, come la scrive la fotocamera (`AAAA-MM-GG hh:mm:ss`).
+    pub shot_at: Option<String>,
     /// Latitudine e longitudine, in gradi decimali.
     pub gps: Option<(f64, f64)>,
     pub rating: Option<i32>,
@@ -98,6 +100,7 @@ pub fn read(path: &Path) -> Result<PhotoMetadata, MetadataError> {
         shutter: field_rational_pair(&exif, exif::Tag::ExposureTime)
             .map(|(num, den)| format_shutter(num, den)),
         focal_mm: field_rational(&exif, exif::Tag::FocalLength),
+        shot_at: field_string(&exif, exif::Tag::DateTimeOriginal),
         gps: None,
         // il rating vive nell'XMP, non nell'EXIF: arriverà con la lettura XMP
         rating: None,
