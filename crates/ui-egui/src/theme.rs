@@ -3,8 +3,47 @@
 //! I valori sono presi dal tema dell'app di riferimento (osservazione dell'interfaccia, tutto codice
 //! nostro). L'applicazione ai `Visuals` di egui riproduce la stessa ricetta.
 
+use std::sync::Arc;
+
 use eframe::egui;
-use eframe::egui::{Color32, CornerRadius, Stroke, Visuals};
+use eframe::egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, Stroke, Visuals};
+
+/// Il nome della famiglia semibold, per i titoli (come il riferimento).
+pub const FONT_SEMIBOLD: &str = "semibold";
+
+/// Installa i font del riferimento: **Inter** (Regular) per il testo, Inter SemiBold per i titoli.
+///
+/// Inter è l'unico font che le regole del progetto permettono di tenere in `assets/fonts/`; i font di
+/// egui restano come ripiego per i glifi che Inter non copre.
+pub fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = FontDefinitions::default();
+    fonts.font_data.insert(
+        "Inter".to_string(),
+        Arc::new(FontData::from_static(include_bytes!(
+            "../../../assets/fonts/Inter-Regular.ttf"
+        ))),
+    );
+    fonts.font_data.insert(
+        "Inter-SemiBold".to_string(),
+        Arc::new(FontData::from_static(include_bytes!(
+            "../../../assets/fonts/Inter-SemiBold.ttf"
+        ))),
+    );
+    let defaults = fonts
+        .families
+        .get(&FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
+    let mut proportional = vec!["Inter".to_string()];
+    proportional.extend(defaults.iter().cloned());
+    fonts.families.insert(FontFamily::Proportional, proportional);
+    let mut semibold = vec!["Inter-SemiBold".to_string()];
+    semibold.extend(defaults);
+    fonts
+        .families
+        .insert(FontFamily::Name(FONT_SEMIBOLD.into()), semibold);
+    ctx.set_fonts(fonts);
+}
 
 /// I colori e le misure del tema.
 ///
@@ -172,9 +211,10 @@ pub fn apply(ctx: &egui::Context) {
         style
             .text_styles
             .insert(egui::TextStyle::Small, egui::FontId::proportional(12.5));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Heading, egui::FontId::proportional(20.0));
+        style.text_styles.insert(
+            egui::TextStyle::Heading,
+            egui::FontId::new(20.0, FontFamily::Name(FONT_SEMIBOLD.into())),
+        );
         style
             .text_styles
             .insert(egui::TextStyle::Monospace, egui::FontId::monospace(14.0));

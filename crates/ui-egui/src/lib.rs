@@ -61,6 +61,7 @@ pub fn run() -> eframe::Result<()> {
         "Postcritica",
         options,
         Box::new(|cc| {
+            theme::install_fonts(&cc.egui_ctx);
             theme::apply(&cc.egui_ctx);
             Ok(Box::new(App::new(cc)))
         }),
