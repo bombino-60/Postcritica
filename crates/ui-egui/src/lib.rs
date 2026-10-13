@@ -105,6 +105,7 @@ enum Msg {
     Error(String),
     Done,
     Analyzed(Box<AnalysisOutcome>),
+    AnalyzedError(String),
 }
 
 /// Lo stato dell'app.
@@ -120,6 +121,12 @@ struct App {
     folder: Option<String>,
     archive: Option<SqliteArchive>,
     reports: HashMap<String, AnalysisReport>,
+    /// Vero mentre un'analisi è in corso.
+    analyzing: bool,
+    /// Le foto in attesa di analisi (batch).
+    queue: Vec<PathBuf>,
+    queue_total: usize,
+    queue_done: usize,
 }
 
 impl App {
@@ -142,6 +149,10 @@ impl App {
             folder: None,
             archive,
             reports: HashMap::new(),
+            analyzing: false,
+            queue: Vec::new(),
+            queue_total: 0,
+            queue_done: 0,
         }
     }
 
@@ -182,7 +193,16 @@ impl App {
                     reader_done = true;
                     self.status = format!("{} foto.", self.photos.len());
                 }
-                Msg::Analyzed(outcome) => self.store_outcome(*outcome),
+                Msg::Analyzed(outcome) => {
+                    self.store_outcome(*outcome);
+                    self.analyzing = false;
+                    self.queue_done += 1;
+                }
+                Msg::AnalyzedError(message) => {
+                    self.status = message;
+                    self.analyzing = false;
+                    self.queue_done += 1;
+                }
             }
         }
         if reader_done {
@@ -193,6 +213,10 @@ impl App {
         }
         if self.reader.is_some() || self.analyzer.is_some() {
             ctx.request_repaint();
+        }
+        // Se il batch non è occupato, passa alla prossima foto in coda.
+        if !self.analyzing && !self.queue.is_empty() {
+            self.pump_queue(ctx);
         }
     }
 
@@ -234,6 +258,29 @@ impl App {
         std::thread::spawn(move || read_folder(&dir, &ctx, &sender));
     }
 
+    /// Avvia l'analisi di un file, in un thread separato.
+    fn analyze_path(&mut self, ctx: &egui::Context, path: PathBuf, name: String) {
+        let model = self.model.clone();
+        let (sender, receiver) = mpsc::channel();
+        self.analyzer = Some(receiver);
+        self.analyzing = true;
+        self.status = format!("Analizzo {name} con {model}… (può richiedere qualche minuto)");
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let critic = OllamaCritic::new(model);
+            match run_analysis(&critic, &path) {
+                Ok(outcome) => {
+                    let _ = sender.send(Msg::Analyzed(Box::new(outcome)));
+                }
+                Err(error) => {
+                    let _ = sender.send(Msg::AnalyzedError(format!("{name}: {error}")));
+                }
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    /// Analizza la foto scelta.
     fn start_analysis(&mut self, ctx: &egui::Context) {
         let Some(photo) = self.selected.and_then(|index| self.photos.get(index)) else {
             self.status = "Seleziona prima una foto.".to_string();
@@ -245,23 +292,46 @@ impl App {
             return;
         };
         let name = photo.name.clone();
-        let model = self.model.clone();
-        let (sender, receiver) = mpsc::channel();
-        self.analyzer = Some(receiver);
-        self.status = format!("Analizzo {name} con {model}… (può richiedere qualche minuto)");
-        let ctx = ctx.clone();
-        std::thread::spawn(move || {
-            let critic = OllamaCritic::new(model);
-            match run_analysis(&critic, &path) {
-                Ok(outcome) => {
-                    let _ = sender.send(Msg::Analyzed(Box::new(outcome)));
-                }
-                Err(error) => {
-                    let _ = sender.send(Msg::Error(format!("Analisi non riuscita: {error}")));
+        self.analyze_path(ctx, path, name);
+    }
+
+    /// Mette in coda tutte le foto non ancora analizzate.
+    fn start_batch(&mut self, ctx: &egui::Context) {
+        if self.analyzing {
+            return;
+        }
+        let mut pending = Vec::new();
+        for photo in &self.photos {
+            if let Some(path) = &photo.path {
+                let key = path.to_string_lossy().to_string();
+                if !self.reports.contains_key(&key) {
+                    pending.push(path.clone());
                 }
             }
-            ctx.request_repaint();
-        });
+        }
+        self.queue = pending;
+        self.queue_total = self.queue.len();
+        self.queue_done = 0;
+        if self.queue.is_empty() {
+            self.status = "Nessuna foto da analizzare.".to_string();
+            return;
+        }
+        self.status = format!("Analizzo {} foto…", self.queue_total);
+        self.pump_queue(ctx);
+    }
+
+    /// Avvia l'analisi della prossima foto in coda (una per volta).
+    fn pump_queue(&mut self, ctx: &egui::Context) {
+        if self.analyzing || self.queue.is_empty() {
+            return;
+        }
+        let path = self.queue.remove(0);
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?")
+            .to_string();
+        self.analyze_path(ctx, path, name);
     }
 
     fn load_demo(&mut self, ctx: &egui::Context) {
@@ -559,6 +629,10 @@ impl eframe::App for App {
                         self.load_demo(&ctx);
                         ui.close();
                     }
+                    if ui.button("Analizza tutte").clicked() {
+                        self.start_batch(&ctx);
+                        ui.close();
+                    }
                     ui.separator();
                     if ui.button("Esci").clicked() {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -588,6 +662,15 @@ impl eframe::App for App {
                     ui.separator();
                     for _ in 0..5 {
                         ui.label(egui::RichText::new("★").color(tokens.text_disabled));
+                    }
+                    if self.queue_total > 0 {
+                        ui.separator();
+                        let fraction = self.queue_done as f32 / self.queue_total as f32;
+                        ui.add(
+                            egui::ProgressBar::new(fraction)
+                                .desired_width(150.0)
+                                .text(format!("{}/{}", self.queue_done, self.queue_total)),
+                        );
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.weak(&self.status);
@@ -624,6 +707,12 @@ impl eframe::App for App {
                                 if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                                     self.start_folder(&ctx, dir);
                                 }
+                            }
+                            if ui
+                                .add_enabled(!self.photos.is_empty(), egui::Button::new("Analizza tutte"))
+                                .clicked()
+                            {
+                                self.start_batch(&ctx);
                             }
                         });
                     egui::CollapsingHeader::new("Tag")
