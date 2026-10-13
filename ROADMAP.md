@@ -1,11 +1,11 @@
-# Roadmap di PhotoInsight Critic
+# Roadmap di Postcritica
 
 **Stadio: pre-alpha** · prossimo: alpha (i flussi principali portati in Rust e usabili)
 
 > **Ultima revisione:** 2026-10-13 · **Ultimo aggiornamento:** 2026-10-13 · **Modifica:** major (creata) · **Obiettivo:** parità funzionale con il programma Python di riferimento, in un'app desktop nativa Rust
 
 Riassunto di una pagina su dove siamo. Il progetto nasce come **port in Rust** del programma Python
-`PhotoInsight-Critic`: l'obiettivo di questa fase non è superare il Python, ma **raggiungerne la parità
+`postcritica-Critic`: l'obiettivo di questa fase non è superare il Python, ma **raggiungerne la parità
 funzionale** con una struttura stratificata e testabile. Poi si riparte da lì.
 
 Agenti: leggete questo, poi scegliete il lavoro da [docs/gaps.md](docs/gaps.md). Metodo ed evidenze in

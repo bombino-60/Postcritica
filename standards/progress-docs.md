@@ -1,9 +1,9 @@
 # Standard: documenti di avanzamento
 
-> **Standard di PhotoInsight Critic.** Adattato dallo standard condiviso `progress-docs` di `craftrules`
+> **Standard di Postcritica.** Adattato dallo standard condiviso `progress-docs` di `craftrules`
 > (repository privato), riscritto in italiano perché il progetto resti autosufficiente.
 
-Definisce la forma e le regole dei quattro documenti che dicono **a che punto è PhotoInsight Critic**,
+Definisce la forma e le regole dei quattro documenti che dicono **a che punto è Postcritica**,
 così che un lettore (umano o agente) possa fidarsi dei numeri senza rifarli.
 
 ## I quattro documenti e chi fa cosa

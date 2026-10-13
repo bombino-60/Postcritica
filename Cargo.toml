@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-  "apps/photoinsight",
+  "apps/postcritica",
   "crates/raster",
   "crates/metadata",
   "crates/analysis",
@@ -20,14 +20,14 @@ rust-version = "1.80"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-photoinsight-raster = { path = "crates/raster" }
-photoinsight-metadata = { path = "crates/metadata" }
-photoinsight-analysis = { path = "crates/analysis" }
-photoinsight-archive = { path = "crates/archive" }
-photoinsight-ai = { path = "crates/ai" }
-photoinsight-report = { path = "crates/report" }
-photoinsight-engine = { path = "crates/engine" }
-photoinsight-ui-egui = { path = "crates/ui-egui" }
+postcritica-raster = { path = "crates/raster" }
+postcritica-metadata = { path = "crates/metadata" }
+postcritica-analysis = { path = "crates/analysis" }
+postcritica-archive = { path = "crates/archive" }
+postcritica-ai = { path = "crates/ai" }
+postcritica-report = { path = "crates/report" }
+postcritica-engine = { path = "crates/engine" }
+postcritica-ui-egui = { path = "crates/ui-egui" }
 
 eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow"] }
 log = "0.4"

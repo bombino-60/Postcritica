@@ -1,11 +1,11 @@
 [package]
-name = "photoinsight"
+name = "postcritica"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Applicazione desktop PhotoInsight Critic."
+description = "Applicazione desktop Postcritica."
 
 [dependencies]
 eframe = { workspace = true }
-photoinsight-ui-egui = { workspace = true }
+postcritica-ui-egui = { workspace = true }

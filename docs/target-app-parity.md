@@ -1,6 +1,6 @@
-# Parità funzionale: PhotoInsight Critic (Rust) vs il programma Python
+# Parità funzionale: Postcritica (Rust) vs il programma Python
 
-> **Ultima revisione:** 2026-10-13 · **Ultimo aggiornamento:** 2026-10-13 · **Modifica:** major (creato) · **Obiettivo:** parità funzionale con `PhotoInsight-Critic` (Python)
+> **Ultima revisione:** 2026-10-13 · **Ultimo aggiornamento:** 2026-10-13 · **Modifica:** major (creato) · **Obiettivo:** parità funzionale con `postcritica-Critic` (Python)
 
 La valutazione di quanto il port Rust è vicino al programma Python. Una riga per funzione è in
 [parity-checklist.md](parity-checklist.md); il lavoro ordinato in [gaps.md](gaps.md). Il metodo segue
@@ -21,9 +21,9 @@ La valutazione di quanto il port Rust è vicino al programma Python. Una riga pe
 
 ## L'obiettivo e come è misurato
 
-- **Obiettivo:** il **programma Python** esistente, funzione per funzione. `PhotoInsight-Critic` è un
+- **Obiettivo:** il **programma Python** esistente, funzione per funzione. `postcritica-Critic` è un
   programma *nostro*: non c'è clean-room, solo la sua mappa funzionale
-  (`D:\Programmi Sviluppo\Unificato\PhotoInsight-Critic`, 54 rotte, 11 tabelle, ~7600 righe).
+  (`D:\Programmi Sviluppo\Unificato\postcritica-Critic`, 54 rotte, 11 tabelle, ~7600 righe).
 - **Lato Rust:** il workspace di questa cartella, con gli 8 crate stratificati.
 - **Lato Python, per riferimento:** le funzioni di `app.py`, `storage.py`, `insight_engine.py`,
   `metadata_writer.py` e i loro test. Non si copia il codice; si portano i comportamenti.

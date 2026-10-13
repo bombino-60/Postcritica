@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Tooling di PhotoInsight Critic: ci, layers, assets, parity."
+description = "Tooling di Postcritica: ci, layers, assets, parity."
 publish = false
 
 [dependencies]

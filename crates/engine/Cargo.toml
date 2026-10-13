@@ -1,14 +1,14 @@
 [package]
-name = "photoinsight-engine"
+name = "postcritica-engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "I comandi e l'orchestrazione di PhotoInsight Critic."
+description = "I comandi e l'orchestrazione di Postcritica."
 
 [dependencies]
-photoinsight-ai = { workspace = true }
-photoinsight-analysis = { workspace = true }
-photoinsight-archive = { workspace = true }
-photoinsight-metadata = { workspace = true }
-photoinsight-report = { workspace = true }
+postcritica-ai = { workspace = true }
+postcritica-analysis = { workspace = true }
+postcritica-archive = { workspace = true }
+postcritica-metadata = { workspace = true }
+postcritica-report = { workspace = true }

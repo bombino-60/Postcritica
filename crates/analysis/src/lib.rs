@@ -13,7 +13,7 @@
     clippy::unreachable
 )]
 
-use photoinsight_raster::Rgba8;
+use postcritica_raster::Rgba8;
 
 /// Statistiche di base di un'immagine, in scala 0..1.
 #[derive(Debug, Clone, PartialEq)]

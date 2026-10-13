@@ -1,9 +1,9 @@
 # Standard: mai in crash
 
-> **Standard di PhotoInsight Critic.** Adattato dallo standard condiviso `never-crash` di `craftrules`
+> **Standard di Postcritica.** Adattato dallo standard condiviso `never-crash` di `craftrules`
 > (repository privato), riscritto in italiano e per Rust perché il progetto resti autosufficiente.
 
-Questa regola viene **prima** di ogni funzione. PhotoInsight Critic legge foto e mantiene un archivio
+Questa regola viene **prima** di ogni funzione. Postcritica legge foto e mantiene un archivio
 locale: un crash a metà di un'analisi, di un batch o di una scrittura può perdere lavoro. Un file
 malformato (un RAW o un JPEG corrotto, un XMP con struttura assurda, un EXIF incoerente), un input
 utente sbagliato, un modello AI che risponde spazzatura, un database corrotto, la rete che cade o il

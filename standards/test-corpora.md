@@ -1,10 +1,10 @@
 # Standard: corpora e file di test
 
-> **Standard di PhotoInsight Critic.** Adattato dallo standard condiviso `test-corpora` di `craftrules`
+> **Standard di Postcritica.** Adattato dallo standard condiviso `test-corpora` di `craftrules`
 > (repository privato), riscritto in italiano perché il progetto resti autosufficiente.
 
 I test che usano file reali (foto, RAW, JPEG con EXIF, XMP) hanno bisogno di quei file — ma **i media
-grandi non si committano mai** e non si usano file di provenienza incerta. PhotoInsight Critic produce
+grandi non si committano mai** e non si usano file di provenienza incerta. Postcritica produce
 inoltre dati pesanti (il database, gli output) che non devono finire nel versionamento.
 
 ## Cosa va fuori dal versionamento

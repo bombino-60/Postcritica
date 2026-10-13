@@ -1,10 +1,10 @@
 [package]
-name = "photoinsight-report"
+name = "postcritica-report"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Esportazione dei report (CSV, JSON) di PhotoInsight Critic."
+description = "Esportazione dei report (CSV, JSON) di Postcritica."
 
 [dependencies]
-photoinsight-archive = { workspace = true }
+postcritica-archive = { workspace = true }

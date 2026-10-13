@@ -1,9 +1,9 @@
 [package]
-name = "photoinsight-ai"
+name = "postcritica-ai"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Integrazione con i modelli (Ollama, OpenAI) di PhotoInsight Critic."
+description = "Integrazione con i modelli (Ollama, OpenAI) di Postcritica."
 
 [dependencies]

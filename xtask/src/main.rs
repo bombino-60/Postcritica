@@ -16,7 +16,7 @@ const CRATES: &[(&str, u8)] = &[
     ("crates/report", 3),
     ("crates/engine", 4),
     ("crates/ui-egui", 5),
-    ("apps/photoinsight", 5),
+    ("apps/postcritica", 5),
 ];
 
 /// Le dipendenze che solo il livello UI (5) può avere.

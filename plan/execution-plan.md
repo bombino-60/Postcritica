@@ -2,7 +2,7 @@
 
 > **Ultima revisione:** 2026-10-13 · **Ultimo aggiornamento:** 2026-10-13 · **Modifica:** major (creato)
 
-Le tappe per portare PhotoInsight Critic dal programma Python all'app desktop Rust. Ogni tappa produce
+Le tappe per portare Postcritica dal programma Python all'app desktop Rust. Ogni tappa produce
 qualcosa di **verificabile** e si chiude con i gate verdi. Il lavoro si sceglie da
 [`../docs/gaps.md`](../docs/gaps.md); lo stato corrente è in [`STATUS.md`](STATUS.md); l'architettura in
 [`../docs/architecture.md`](../docs/architecture.md).

@@ -14,8 +14,8 @@
     clippy::unreachable
 )]
 
-use photoinsight_ai::{AiError, AnalysisRequest, Critic};
-use photoinsight_archive::{AnalysisRecord, Archive, ArchiveError};
+use postcritica_ai::{AiError, AnalysisRequest, Critic};
+use postcritica_archive::{AnalysisRecord, Archive, ArchiveError};
 
 /// L'engine: un archivio e un valutatore.
 pub struct Engine<A, C> {
@@ -94,8 +94,8 @@ impl std::error::Error for EngineError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use photoinsight_ai::FakeCritic;
-    use photoinsight_archive::MemoryArchive;
+    use postcritica_ai::FakeCritic;
+    use postcritica_archive::MemoryArchive;
 
     fn engine(json: &str) -> Engine<MemoryArchive, FakeCritic> {
         Engine::new(

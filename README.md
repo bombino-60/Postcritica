@@ -1,10 +1,10 @@
-# PhotoInsight Critic
+# Postcritica
 
 Applicazione **desktop nativa in Rust** per l'analisi tecnica, la catalogazione e la critica fotografica,
 con archivio locale SQLite e analisi tramite **Ollama** (modelli vision in locale) o **ChatGPT Vision**.
 
 È il **port in Rust** del programma Python esistente
-(`D:\Programmi Sviluppo\Unificato\PhotoInsight-Critic`), che resta il riferimento funzionale. La lingua di
+(`D:\Programmi Sviluppo\Unificato\postcritica-Critic`), che resta il riferimento funzionale. La lingua di
 lavoro del codice è l'italiano (commenti, docstring e stringhe); gli identificatori sono in inglese.
 
 ## Stato
@@ -21,7 +21,7 @@ cargo test --workspace
 cargo xtask ci
 
 # avvia l'applicazione desktop
-cargo run -p photoinsight
+cargo run -p postcritica
 ```
 
 ## Documenti
@@ -40,7 +40,7 @@ cargo run -p photoinsight
 
 ```
 crates/    le crate stratificate (raster, metadata, analysis, archive, ai, report, engine, ui-egui)
-apps/      il binario desktop (photoinsight)
+apps/      il binario desktop (postcritica)
 xtask/     il tooling (ci, layers, assets, parity)
 docs/      i documenti di avanzamento e l'architettura
 standards/ gli standard del progetto

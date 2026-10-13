@@ -36,5 +36,5 @@
 - Compilazione del workspace: OK.
 
 ## Decisioni del proprietario in sospeso
-- Nome definitivo del prodotto e delle crate (qui: `photoinsight-*`).
+- Nome definitivo del prodotto e delle crate (qui: `postcritica-*`).
 - Se introdurre il canale di controllo e MCP (tappa T8).

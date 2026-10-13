@@ -92,7 +92,7 @@ mod tests {
     #[test]
     fn a_supported_extension_is_reported_as_not_yet_implemented() {
         let dir = std::env::temp_dir();
-        let path = dir.join("photoinsight-t2-probe.jpg");
+        let path = dir.join("postcritica-t2-probe.jpg");
         std::fs::write(&path, b"non e' un vero jpeg").expect("scrivo il file di prova");
         let result = read(&path);
         let _ = std::fs::remove_file(&path);
@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn an_unknown_extension_says_which_one() {
         let dir = std::env::temp_dir();
-        let path = dir.join("photoinsight-t2-probe.xyz");
+        let path = dir.join("postcritica-t2-probe.xyz");
         std::fs::write(&path, b"qualunque cosa").expect("scrivo il file di prova");
         let result = read(&path);
         let _ = std::fs::remove_file(&path);

@@ -1,6 +1,6 @@
 # Standard: font
 
-> **Standard di PhotoInsight Critic.** Adattato dallo standard condiviso `fonts` di `craftrules`
+> **Standard di Postcritica.** Adattato dallo standard condiviso `fonts` di `craftrules`
 > (repository privato), riscritto in italiano perché il progetto resti autosufficiente.
 
 Regola di base: **i file dei font non stanno nel repository del prodotto.** Appesantiscono ogni clone e

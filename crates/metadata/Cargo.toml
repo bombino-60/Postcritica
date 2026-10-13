@@ -1,9 +1,9 @@
 [package]
-name = "photoinsight-metadata"
+name = "postcritica-metadata"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Lettura e scrittura EXIF / XMP / IPTC di PhotoInsight Critic."
+description = "Lettura e scrittura EXIF / XMP / IPTC di Postcritica."
 
 [dependencies]

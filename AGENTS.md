@@ -1,13 +1,13 @@
-# PhotoInsight Critic — istruzioni per gli agenti
+# Postcritica — istruzioni per gli agenti
 
-PhotoInsight Critic è un'**applicazione desktop nativa in Rust** per l'analisi tecnica, la catalogazione,
+Postcritica è un'**applicazione desktop nativa in Rust** per l'analisi tecnica, la catalogazione,
 la critica fotografica, l'archivio, le statistiche e le raccolte. Tutti i dati restano in un database
 **SQLite** locale; le analisi usano **Ollama** (modelli vision in locale) oppure **ChatGPT Vision**. La UI
 è **egui/eframe**, come LightCraft. Il codice ha commenti, docstring e stringhe utente in **italiano**; gli
 identificatori sono in inglese.
 
 Questa cartella (`D:\Programmi Sviluppo\Photocritic`) è la casa del progetto. Il **riferimento funzionale**
-è il programma Python esistente `D:\Programmi Sviluppo\Unificato\PhotoInsight-Critic`: va portato, non
+è il programma Python esistente `D:\Programmi Sviluppo\Unificato\postcritica-Critic`: va portato, non
 imitato nella struttura. Il piano della migrazione è in [`plan/execution-plan.md`](plan/execution-plan.md);
 l'architettura di destinazione in [`docs/architecture.md`](docs/architecture.md).
 
@@ -89,7 +89,7 @@ un crash deve perdere minuti, non ore.
 - **Mai committare** il database o i media grandi.
 
 ## Eseguire e guardare l'app
-- **Avvio:** `cargo run -p photoinsight` (binario desktop). **TODO(photocritic):** aggiungere un canale di
+- **Avvio:** `cargo run -p postcritica` (binario desktop). **TODO(photocritic):** aggiungere un canale di
   controllo (JSON-lines su una porta locale, come LightCraft) per pilotare l'app in modo deterministico —
   senza, gli agenti non possono guidarla.
 - **Non inviare mai input sintetico a livello di sistema operativo** (tasti o clic via automazione): va
@@ -119,7 +119,7 @@ crates/
   engine/                  (L4) comandi e orchestrazione: analisi, batch, sincronizzazione, punteggi
   ui-egui/                 (L5) interfaccia egui, viste, pannelli
 apps/
-  photoinsight/            binario desktop
+  postcritica/             binario desktop
 xtask/                     tooling: ci, layers, assets, parity
 scenes/  (eventuale)       foto dimostrative generate proceduralmente
 docs/  standards/  plan/  assets/

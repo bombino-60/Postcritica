@@ -1,4 +1,4 @@
-# Architettura di PhotoInsight Critic
+# Architettura di Postcritica
 
 > **Ultima revisione:** 2026-10-13 · **Ultimo aggiornamento:** 2026-10-13 · **Modifica:** major (creato) · **Obiettivo:** portare il programma Python in un'app desktop Rust
 
@@ -11,7 +11,7 @@ tappe è in [`../plan/execution-plan.md`](../plan/execution-plan.md); le regole 
 - **Prodotto finale:** app **desktop nativa in Rust** (egui/eframe), offline per default, con archivio
   **SQLite** locale e analisi via **Ollama** (locale) o **ChatGPT/OpenAI**.
 - **Riferimento funzionale:** il programma Python in
-  `D:\Programmi Sviluppo\Unificato\PhotoInsight-Critic` (è un programma nostro: non c'è clean-room da
+  `D:\Programmi Sviluppo\Unificato\postcritica-Critic` (è un programma nostro: non c'è clean-room da
   rispettare, solo da **non imitarne** la struttura monolitica).
 - **Lingua:** commenti, docstring e stringhe utente in italiano; identificatori in inglese.
 
@@ -21,7 +21,7 @@ Le dipendenze puntano solo verso il basso. La tabella è verificata da `cargo xt
 
 | Livello | Crate | Dipende da |
 |---|---|---|
-| L5 | `ui-egui`, `apps/photoinsight` | engine, (develop?) |
+| L5 | `ui-egui`, `apps/postcritica` | engine, (develop?) |
 | L4 | `engine` | analysis, archive, ai, report, metadata |
 | L3 | `report` | analysis, archive |
 | L2 | `archive`, `ai` | metadata, (raster) |

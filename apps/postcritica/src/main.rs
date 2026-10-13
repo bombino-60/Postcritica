@@ -1,4 +1,4 @@
-//! PhotoInsight Critic — applicazione desktop.
+//! Postcritica — applicazione desktop.
 
 #![forbid(unsafe_code)]
 #![deny(
@@ -11,5 +11,5 @@
 )]
 
 fn main() -> eframe::Result<()> {
-    photoinsight_ui_egui::run()
+    postcritica_ui_egui::run()
 }

@@ -13,7 +13,7 @@
     clippy::unreachable
 )]
 
-use photoinsight_archive::AnalysisRecord;
+use postcritica_archive::AnalysisRecord;
 
 /// Esporta i record in CSV.
 pub fn to_csv(records: &[&AnalysisRecord]) -> String {

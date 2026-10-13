@@ -1470,63 +1470,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
-name = "photoinsight"
-version = "0.1.0"
-dependencies = [
- "eframe",
- "photoinsight-ui-egui",
-]
-
-[[package]]
-name = "photoinsight-ai"
-version = "0.1.0"
-
-[[package]]
-name = "photoinsight-analysis"
-version = "0.1.0"
-dependencies = [
- "photoinsight-raster",
-]
-
-[[package]]
-name = "photoinsight-archive"
-version = "0.1.0"
-
-[[package]]
-name = "photoinsight-engine"
-version = "0.1.0"
-dependencies = [
- "photoinsight-ai",
- "photoinsight-analysis",
- "photoinsight-archive",
- "photoinsight-metadata",
- "photoinsight-report",
-]
-
-[[package]]
-name = "photoinsight-metadata"
-version = "0.1.0"
-
-[[package]]
-name = "photoinsight-raster"
-version = "0.1.0"
-
-[[package]]
-name = "photoinsight-report"
-version = "0.1.0"
-dependencies = [
- "photoinsight-archive",
-]
-
-[[package]]
-name = "photoinsight-ui-egui"
-version = "0.1.0"
-dependencies = [
- "eframe",
- "photoinsight-engine",
-]
-
-[[package]]
 name = "pin-project"
 version = "1.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1598,6 +1541,63 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50596ddc09eb5ad5f75cacd40209568e66df71baf86e1499a0e99c4cff12a5a6"
 dependencies = [
  "arrayvec",
+]
+
+[[package]]
+name = "postcritica"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "postcritica-ui-egui",
+]
+
+[[package]]
+name = "postcritica-ai"
+version = "0.1.0"
+
+[[package]]
+name = "postcritica-analysis"
+version = "0.1.0"
+dependencies = [
+ "postcritica-raster",
+]
+
+[[package]]
+name = "postcritica-archive"
+version = "0.1.0"
+
+[[package]]
+name = "postcritica-engine"
+version = "0.1.0"
+dependencies = [
+ "postcritica-ai",
+ "postcritica-analysis",
+ "postcritica-archive",
+ "postcritica-metadata",
+ "postcritica-report",
+]
+
+[[package]]
+name = "postcritica-metadata"
+version = "0.1.0"
+
+[[package]]
+name = "postcritica-raster"
+version = "0.1.0"
+
+[[package]]
+name = "postcritica-report"
+version = "0.1.0"
+dependencies = [
+ "postcritica-archive",
+]
+
+[[package]]
+name = "postcritica-ui-egui"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "postcritica-engine",
 ]
 
 [[package]]
