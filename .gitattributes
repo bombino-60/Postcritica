@@ -1,0 +1,6 @@
+# Normalizza i fine di riga, come il repository originale.
+* text=auto
+
+# Sorgenti Rust e configurazione: sempre LF.
+*.rs text eol=lf
+*.toml text eol=lf
