@@ -337,6 +337,94 @@ impl App {
         self.analyze_path(ctx, path, name);
     }
 
+    /// Imposta la valutazione a stelle della foto scelta.
+    fn set_rating(&mut self, rating: i32) {
+        let Some(photo) = self.selected.and_then(|index| self.photos.get(index)) else {
+            return;
+        };
+        let Some(path) = photo.path.clone() else { return };
+        let key = path.to_string_lossy().to_string();
+        let name = photo.name.clone();
+        if let Some(store) = &mut self.archive {
+            let mut record = store
+                .find(&key)
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| AnalysisRecord::new(name, key));
+            record.rating = Some(rating);
+            if let Err(error) = store.save(record) {
+                self.status = format!("{error}");
+            } else {
+                self.status = format!("Valutazione: {rating} stelle.");
+            }
+        }
+    }
+
+    /// Esporta il report della foto scelta in PDF.
+    fn export_pdf(&mut self) {
+        let Some(key) = self.selected_key() else {
+            self.status = "Seleziona una foto con un'analisi.".to_string();
+            return;
+        };
+        let Some(report) = self.reports.get(&key) else {
+            self.status = "Nessuna analisi da esportare.".to_string();
+            return;
+        };
+        let name = self
+            .photos
+            .get(self.selected.unwrap_or(0))
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "report".to_string());
+        let mut lines = Vec::new();
+        lines.push(format!(
+            "Punteggio: {}",
+            report
+                .score
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "—".to_string())
+        ));
+        lines.push(format!("Modello: {}", report.model));
+        if let Some(summary) = &report.summary {
+            lines.push(format!("Sintesi: {summary}"));
+        }
+        if !report.tags.is_empty() {
+            lines.push(format!("Tag: {}", report.tags.join(", ")));
+        }
+        lines.push(String::new());
+        lines.push("Punti di forza:".to_string());
+        for item in &report.strengths {
+            lines.push(format!("- {item}"));
+        }
+        lines.push(String::new());
+        lines.push("Punti di debolezza:".to_string());
+        for item in &report.weaknesses {
+            lines.push(format!("- {item}"));
+        }
+        let pdf = postcritica_engine::report_pdf(&name, &lines);
+        let default_name = format!("{name}.pdf");
+        if let Some(path) = rfd::FileDialog::new().set_file_name(default_name).save_file() {
+            match std::fs::write(&path, &pdf) {
+                Ok(()) => self.status = format!("PDF scritto in {}", path.display()),
+                Err(error) => self.status = format!("Non scrivo il PDF: {error}"),
+            }
+        }
+    }
+
+    /// Importa le analisi dal database del programma Python.
+    fn import_python(&mut self) {
+        let Some(path) = rfd::FileDialog::new().add_filter("SQLite", &["db"]).pick_file() else {
+            return;
+        };
+        let Some(store) = &mut self.archive else {
+            self.status = "Archivio non disponibile.".to_string();
+            return;
+        };
+        match store.import_python(&path) {
+            Ok(count) => self.status = format!("Importate {count} analisi da {}.", path.display()),
+            Err(error) => self.status = format!("Import non riuscito: {error}"),
+        }
+    }
+
     fn load_demo(&mut self, ctx: &egui::Context) {
         self.photos.clear();
         self.selected = None;
@@ -620,6 +708,41 @@ impl App {
             ui.ctx()
                 .data_mut(|data| data.insert_temp(egui::Id::new("analizza"), true));
         }
+        {
+            let tokens = Tokens::get(ui.ctx());
+            let current = photo
+                .path
+                .as_ref()
+                .and_then(|path| {
+                    self.archive
+                        .as_ref()
+                        .and_then(|store| store.find(&path.to_string_lossy()).ok().flatten())
+                })
+                .and_then(|record| record.rating)
+                .unwrap_or(0);
+            ui.horizontal(|ui| {
+                ui.label("Valutazione:");
+                for star in 1..=5 {
+                    let filled = star <= current;
+                    let (text, colour) = if filled {
+                        ("★", tokens.star)
+                    } else {
+                        ("☆", tokens.text_disabled)
+                    };
+                    if ui
+                        .add(egui::Button::new(egui::RichText::new(text).color(colour)).frame(false))
+                        .clicked()
+                    {
+                        ui.ctx()
+                            .data_mut(|data| data.insert_temp(egui::Id::new("rating"), star));
+                    }
+                }
+                if ui.button("Esporta PDF").clicked() {
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(egui::Id::new("pdf"), true));
+                }
+            });
+        }
         ui.add_space(6.0);
         ui.heading(&photo.name);
         let (width, height) = photo.inspection.original;
@@ -692,6 +815,15 @@ impl eframe::App for App {
         if requested {
             self.start_analysis(&ctx);
         }
+        if let Some(rating) = ctx.data_mut(|data| data.remove_temp::<i32>(egui::Id::new("rating"))) {
+            self.set_rating(rating);
+        }
+        if ctx
+            .data_mut(|data| data.remove_temp::<bool>(egui::Id::new("pdf")))
+            .unwrap_or(false)
+        {
+            self.export_pdf();
+        }
 
         egui::Panel::top("menu").show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -708,6 +840,10 @@ impl eframe::App for App {
                     }
                     if ui.button("Analizza tutte").clicked() {
                         self.start_batch(&ctx);
+                        ui.close();
+                    }
+                    if ui.button("Importa dal programma Python…").clicked() {
+                        self.import_python();
                         ui.close();
                     }
                     ui.separator();

@@ -27,6 +27,7 @@ pub use postcritica_analysis::VisualProfile;
 pub use postcritica_archive::{AnalysisRecord, Archive, SqliteArchive};
 pub use postcritica_metadata::PhotoMetadata;
 pub use postcritica_raster::{rgba_bytes, Rgba8};
+pub use postcritica_report::report_pdf;
 
 /// Il risultato dell'ispezione di una foto: metadati, profilo visivo e miniatura.
 pub struct Inspection {

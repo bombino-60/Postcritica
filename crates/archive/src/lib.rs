@@ -32,6 +32,8 @@ pub struct AnalysisRecord {
     pub camera: Option<String>,
     /// Gli ISO dello scatto (per le statistiche).
     pub iso: Option<u32>,
+    /// La valutazione a stelle (0–5), se l'utente l'ha data.
+    pub rating: Option<i32>,
 }
 
 impl AnalysisRecord {
@@ -47,6 +49,7 @@ impl AnalysisRecord {
             report_json: String::new(),
             camera: None,
             iso: None,
+            rating: None,
         }
     }
 }
@@ -78,6 +81,9 @@ pub trait Archive {
 
     fn get(&self, id: i64) -> Result<AnalysisRecord, ArchiveError>;
 
+    /// Un record dalla sua fonte (percorso), se c'è.
+    fn find(&self, source_key: &str) -> Result<Option<AnalysisRecord>, ArchiveError>;
+
     /// Tutti i record, dal più recente.
     fn history(&self) -> Result<Vec<AnalysisRecord>, ArchiveError>;
 
@@ -89,7 +95,7 @@ fn backend(error: rusqlite::Error) -> ArchiveError {
 }
 
 /// Le colonne lette, sempre nello stesso ordine.
-const COLUMNS: &str = "id, file_name, source_key, score, tags, model, report_json, camera, iso";
+const COLUMNS: &str = "id, file_name, source_key, score, tags, model, report_json, camera, iso, rating";
 
 /// L'archivio su un file SQLite.
 pub struct SqliteArchive {
@@ -118,7 +124,8 @@ impl SqliteArchive {
                     model TEXT,
                     report_json TEXT NOT NULL DEFAULT '',
                     camera TEXT,
-                    iso INTEGER
+                    iso INTEGER,
+                    rating INTEGER
                 );",
             )
             .map_err(backend)?;
@@ -129,6 +136,9 @@ impl SqliteArchive {
         let _ = self
             .conn
             .execute("ALTER TABLE analyses ADD COLUMN iso INTEGER", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE analyses ADD COLUMN rating INTEGER", []);
         Ok(())
     }
 
@@ -144,7 +154,56 @@ impl SqliteArchive {
             report_json: row.get(6)?,
             camera: row.get(7)?,
             iso: row.get(8)?,
+            rating: row.get(9)?,
         })
+    }
+
+    /// Importa le analisi dal database del programma Python (schema diverso), con una traduzione
+    /// best-effort. Restituisce quante righe ha importato.
+    pub fn import_python(&mut self, python_db: &Path) -> Result<usize, ArchiveError> {
+        let source =
+            rusqlite::Connection::open_with_flags(python_db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(backend)?;
+        let mut statement = source
+            .prepare(
+                "SELECT file_name, file_path, source_key, score, tags_json, model, report_json FROM analyses",
+            )
+            .map_err(backend)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<f64>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                ))
+            })
+            .map_err(backend)?;
+        let mut imported = 0usize;
+        for row in rows {
+            let (file_name, file_path, source_key, score, tags_json, model, report_json) =
+                row.map_err(backend)?;
+            let key = source_key
+                .or(file_path)
+                .or_else(|| file_name.clone())
+                .unwrap_or_default();
+            if key.is_empty() {
+                continue;
+            }
+            let mut record = AnalysisRecord::new(file_name.unwrap_or_default(), key);
+            record.score = score.map(|value| value.round() as i32);
+            record.tags = tags_json
+                .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+                .unwrap_or_default();
+            record.model = model;
+            record.report_json = report_json.unwrap_or_default();
+            self.save(record)?;
+            imported += 1;
+        }
+        Ok(imported)
     }
 }
 
@@ -153,8 +212,8 @@ impl Archive for SqliteArchive {
         let tags = serde_json::to_string(&record.tags).map_err(|e| ArchiveError::Backend(e.to_string()))?;
         self.conn
             .execute(
-                "INSERT INTO analyses (file_name, source_key, score, tags, model, report_json, camera, iso)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                "INSERT INTO analyses (file_name, source_key, score, tags, model, report_json, camera, iso, rating)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                  ON CONFLICT(source_key) DO UPDATE SET
                     file_name = excluded.file_name,
                     score = excluded.score,
@@ -162,7 +221,8 @@ impl Archive for SqliteArchive {
                     model = excluded.model,
                     report_json = excluded.report_json,
                     camera = excluded.camera,
-                    iso = excluded.iso",
+                    iso = excluded.iso,
+                    rating = excluded.rating",
                 rusqlite::params![
                     record.file_name,
                     record.source_key,
@@ -171,7 +231,8 @@ impl Archive for SqliteArchive {
                     record.model,
                     record.report_json,
                     record.camera,
-                    record.iso
+                    record.iso,
+                    record.rating
                 ],
             )
             .map_err(backend)?;
@@ -192,6 +253,18 @@ impl Archive for SqliteArchive {
                 rusqlite::Error::QueryReturnedNoRows => ArchiveError::NotFound(id),
                 other => backend(other),
             })
+    }
+
+    fn find(&self, source_key: &str) -> Result<Option<AnalysisRecord>, ArchiveError> {
+        let sql = format!("SELECT {COLUMNS} FROM analyses WHERE source_key = ?1");
+        match self
+            .conn
+            .query_row(&sql, [source_key], SqliteArchive::row_to_record)
+        {
+            Ok(record) => Ok(Some(record)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(error) => Err(backend(error)),
+        }
     }
 
     fn history(&self) -> Result<Vec<AnalysisRecord>, ArchiveError> {
@@ -256,6 +329,10 @@ impl Archive for MemoryArchive {
             .find(|r| r.id == id)
             .cloned()
             .ok_or(ArchiveError::NotFound(id))
+    }
+
+    fn find(&self, source_key: &str) -> Result<Option<AnalysisRecord>, ArchiveError> {
+        Ok(self.records.iter().find(|r| r.source_key == source_key).cloned())
     }
 
     fn history(&self) -> Result<Vec<AnalysisRecord>, ArchiveError> {
