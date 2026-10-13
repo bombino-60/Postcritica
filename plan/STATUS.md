@@ -1,22 +1,22 @@
 # Stato
 
-**Tappa corrente:** T0 — Fondamenta (chiusa)
-**Prossimo task:** aprire la tappa **T1** (`archive`): schema SQLite nuovo, migrazioni, e lo strumento di import dal Python.
+**Tappa corrente:** T0 chiusa; in corso una **fetta verticale usabile** (parte di T2 e T7).
+**Prossimo task:** chiudere T1 (`archive`, SQLite + import dal Python), poi completare T2.
 
 ## Fatto
-- Regole e standard scritti e adattati al Rust (`AGENTS.md`, `standards/`), in italiano.
-- Architettura di destinazione e mappa dalla struttura Python (`docs/architecture.md`).
-- Piano a tappe (`plan/execution-plan.md`); documenti di avanzamento (`ROADMAP.md`, `docs/`).
-- Workspace Cargo con 8 crate stratificati (L0–L5) + il binario `photoinsight`.
-- `xtask` con `ci`, `layers`, `assets`, `parity`; alias `cargo xtask`.
-- API minime ma reali con test: **22 test verdi** (raster, metadata, analysis, archive, ai, report, engine).
-- **`cargo xtask ci` verde**: fmt, clippy `-D warnings`, test, strati, asset, documenti.
-- L'app egui compila (eframe 0.36.2) e apre una finestra con un'etichetta.
-- Licenza **MIT OR Apache-2.0** (`LICENSE-MIT`, `LICENSE-APACHE`, `NOTICE`).
-- Repository **git inizializzato** e primo commit (nessun remote).
+- Regole e standard in italiano (`AGENTS.md`, `standards/`), tarati sul Rust.
+- Architettura di destinazione e mappa dal Python (`docs/architecture.md`); piano a tappe; documenti.
+- Workspace Cargo con 8 crate stratificati (L0–L5) + il binario `postcritica`; `xtask` con
+  `ci`/`layers`/`assets`/`parity`.
+- Licenza MIT OR Apache-2.0; repository git collegato al remote `origin`.
+- **Fetta usabile:** finestra egui con **griglia di miniature**, **ispettore** (metadati EXIF + profilo
+  visivo) e pulsante **Demo**; lettura di una cartella in un thread separato.
+- `raster::decode_thumbnail` (decodifica con tetto di memoria) e `metadata::read` (EXIF con
+  `kamadak-exif`) reali.
+- **26 test verdi**; `cargo xtask ci` verde; **eseguibile release** in `dist/postcritica.exe`.
 
 ## In corso
-- Tappa T1 (`archive`): schema SQLite nuovo, migrazioni, e lo strumento di import dal database Python.
+- Nulla di aperto: la fetta è chiusa e committata.
 
 ## Blocchi
 - Nessuno.
@@ -24,17 +24,16 @@
 ## Assunzioni registrate
 - Interfaccia: app desktop nativa egui/eframe.
 - Codice: commenti/stringhe in italiano, identificatori in inglese.
-- Provider AI: Ollama e ChatGPT/OpenAI, come il programma Python.
-- SQLite è l'unica dipendenza nativa ammessa (l'archivio del programma è SQLite).
-- L'obiettivo di questa fase è la **parità funzionale** col Python, non superarlo.
-- Licenza: MIT OR Apache-2.0 (deciso dal proprietario).
-- Dati: **schema nuovo** + **strumento di import** dal database Python (deciso dal proprietario).
+- Provider AI: Ollama e ChatGPT/OpenAI (non ancora collegati).
+- SQLite è l'unica dipendenza nativa ammessa.
+- Obiettivo di fase: **parità funzionale** col Python.
+- Dati: **schema nuovo** + **strumento di import** dal Python (T1).
 
 ## Metriche
-- Test: 22 verdi.
-- Righe Rust: ~1.100 (inclusi i test e i commenti).
+- Test: 26 verdi.
+- Eseguibile release: ~8 MB.
 - Compilazione del workspace: OK.
 
 ## Decisioni del proprietario in sospeso
-- Nome definitivo del prodotto e delle crate (qui: `postcritica-*`).
 - Se introdurre il canale di controllo e MCP (tappa T8).
+- Nome delle crate: al momento `postcritica-*`.

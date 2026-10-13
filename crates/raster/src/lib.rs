@@ -12,6 +12,8 @@
     clippy::unreachable
 )]
 
+use std::path::Path;
+
 /// Un'immagine RGBA8, righe dall'alto verso il basso.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rgba8 {
@@ -62,6 +64,66 @@ impl Rgba8 {
         let index = y.checked_mul(self.width)?.checked_add(x)?;
         self.data.get(index).copied()
     }
+}
+
+/// Cosa può andare storto decodificando un'immagine.
+#[derive(Debug)]
+pub enum RasterError {
+    /// Il file non si è potuto aprire o leggere.
+    Io(String),
+    /// Il formato c'è ma i pixel non si sono potuti decodificare.
+    Decode(String),
+    /// L'immagine decodificata non ha pixel.
+    Empty,
+}
+
+impl std::fmt::Display for RasterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(what) => write!(f, "errore di lettura: {what}"),
+            Self::Decode(what) => write!(f, "immagine non decodificabile: {what}"),
+            Self::Empty => write!(f, "l'immagine non ha pixel"),
+        }
+    }
+}
+
+impl std::error::Error for RasterError {}
+
+/// Le dimensioni dichiarate da un file immagine, senza decodificarlo tutto.
+pub fn dimensions(path: &Path) -> Result<(u32, u32), RasterError> {
+    image::image_dimensions(path).map_err(|error| RasterError::Decode(error.to_string()))
+}
+
+/// Decodifica un file immagine e ne restituisce una miniatura RGBA8.
+///
+/// Il lato più lungo non supera `max_edge`: l'input è ostile e non si alloca memoria per un'immagine
+/// che dichiara dimensioni enormi.
+pub fn decode_thumbnail(path: &Path, max_edge: u32) -> Result<Rgba8, RasterError> {
+    let reader = image::ImageReader::open(path).map_err(|error| RasterError::Io(error.to_string()))?;
+    let reader = reader
+        .with_guessed_format()
+        .map_err(|error| RasterError::Io(error.to_string()))?;
+    let decoded = reader
+        .decode()
+        .map_err(|error| RasterError::Decode(error.to_string()))?;
+    let edge = max_edge.clamp(1, 8192);
+    let thumb = decoded.thumbnail(edge, edge);
+    let rgba = thumb.to_rgba8();
+    let (width, height) = (rgba.width(), rgba.height());
+    let data = rgba
+        .pixels()
+        .map(|p| [p[0], p[1], p[2], p[3]])
+        .collect::<Vec<_>>();
+    Rgba8::new(width as usize, height as usize, data).ok_or(RasterError::Empty)
+}
+
+/// I pixel di un'immagine come byte RGBA in sequenza, pronti per una texture.
+pub fn rgba_bytes(image: &Rgba8) -> Vec<u8> {
+    let mut out = Vec::with_capacity(image.data.len() * 4);
+    for pixel in &image.data {
+        out.extend_from_slice(pixel);
+    }
+    out
 }
 
 #[cfg(test)]

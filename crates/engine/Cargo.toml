@@ -8,6 +8,7 @@ description = "I comandi e l'orchestrazione di Postcritica."
 
 [dependencies]
 postcritica-ai = { workspace = true }
+postcritica-raster = { workspace = true }
 postcritica-analysis = { workspace = true }
 postcritica-archive = { workspace = true }
 postcritica-metadata = { workspace = true }

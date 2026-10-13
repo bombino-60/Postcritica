@@ -7,3 +7,7 @@ rust-version.workspace = true
 description = "Lettura e scrittura EXIF / XMP / IPTC di Postcritica."
 
 [dependencies]
+kamadak-exif = { workspace = true }
+
+[dev-dependencies]
+image = { workspace = true }

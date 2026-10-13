@@ -14,8 +14,17 @@
     clippy::unreachable
 )]
 
+use std::path::Path;
+
 use postcritica_ai::{AiError, AnalysisRequest, Critic};
 use postcritica_archive::{AnalysisRecord, Archive, ArchiveError};
+use postcritica_metadata::{self, MetadataError};
+use postcritica_raster::{self, RasterError};
+
+// Tipi condivisi ri-esportati, così il livello UI dipende solo dall'engine.
+pub use postcritica_analysis::VisualProfile;
+pub use postcritica_metadata::PhotoMetadata;
+pub use postcritica_raster::{rgba_bytes, Rgba8};
 
 /// L'engine: un archivio e un valutatore.
 pub struct Engine<A, C> {
@@ -73,11 +82,38 @@ fn parse_score(json: &str) -> Option<i32> {
     digits.parse::<i32>().ok()
 }
 
+/// Il risultato dell'ispezione di una foto: metadati, profilo visivo e miniatura.
+pub struct Inspection {
+    pub metadata: PhotoMetadata,
+    pub profile: VisualProfile,
+    /// Le dimensioni dichiarate dal file (0, 0 se non leggibili).
+    pub original: (u32, u32),
+    pub thumb: Rgba8,
+}
+
+/// Ispeziona una foto: legge i metadati, decodifica una miniatura e ne calcola il profilo visivo.
+///
+/// Non va mai in panic: un file illeggibile esce come `EngineError`.
+pub fn inspect_photo(path: &Path, max_edge: u32) -> Result<Inspection, EngineError> {
+    let metadata = postcritica_metadata::read(path).map_err(EngineError::Metadata)?;
+    let original = postcritica_raster::dimensions(path).unwrap_or((0, 0));
+    let thumb = postcritica_raster::decode_thumbnail(path, max_edge).map_err(EngineError::Raster)?;
+    let profile = VisualProfile::of(&thumb);
+    Ok(Inspection {
+        metadata,
+        profile,
+        original,
+        thumb,
+    })
+}
+
 /// Cosa può andare storto in un comando.
 #[derive(Debug)]
 pub enum EngineError {
     Archive(ArchiveError),
     Ai(AiError),
+    Metadata(MetadataError),
+    Raster(RasterError),
 }
 
 impl std::fmt::Display for EngineError {
@@ -85,6 +121,8 @@ impl std::fmt::Display for EngineError {
         match self {
             Self::Archive(error) => write!(f, "{error}"),
             Self::Ai(error) => write!(f, "{error}"),
+            Self::Metadata(error) => write!(f, "{error}"),
+            Self::Raster(error) => write!(f, "{error}"),
         }
     }
 }

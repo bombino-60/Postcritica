@@ -8,4 +8,6 @@ description = "Interfaccia desktop (egui/eframe) di Postcritica."
 
 [dependencies]
 eframe = { workspace = true }
+rfd = { workspace = true }
 postcritica-engine = { workspace = true }
+postcritica-raster = { workspace = true }

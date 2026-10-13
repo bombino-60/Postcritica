@@ -32,3 +32,6 @@ __pycache__/
 # Sistema
 .DS_Store
 Thumbs.db
+
+# Eseguibile pronto da provare
+dist/

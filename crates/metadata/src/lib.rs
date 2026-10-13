@@ -1,7 +1,7 @@
 //! Lettura e scrittura dei metadati di una foto: EXIF, XMP, IPTC.
 //!
-//! Il port inizia dai formati comuni (JPEG / PNG / TIFF); i RAW arrivano quando c'è una crate Rust
-//! adatta. Fino ad allora un RAW risponde "formato non supportato", senza mai andare in panic.
+//! Il port parte dai formati comuni (JPEG / TIFF / HEIC / PNG / WebP); i RAW arrivano quando c'è una
+//! crate Rust adatta. Fino ad allora un RAW risponde "formato non supportato", senza mai andare in panic.
 
 #![forbid(unsafe_code)]
 #![deny(
@@ -34,7 +34,7 @@ pub struct PhotoMetadata {
 /// Cosa può andare storto leggendo o scrivendo i metadati.
 #[derive(Debug)]
 pub enum MetadataError {
-    /// Formato non ancora supportato (il port parte da JPEG / PNG / TIFF).
+    /// Formato non ancora supportato (il port parte da JPEG / TIFF / HEIC / PNG / WebP).
     Unsupported(String),
     /// Il file non si è potuto leggere.
     Io(io::Error),
@@ -60,22 +60,109 @@ impl From<io::Error> for MetadataError {
     }
 }
 
+/// Le estensioni che il lettore prova ad aprire.
+const SUPPORTED: &[&str] = &["jpg", "jpeg", "tif", "tiff", "heic", "heif", "png", "webp"];
+
 /// Legge i metadati di una foto.
 ///
-/// Oggi distingue i formati supportati da quelli no; la lettura EXIF/XMP vera arriva nella tappa T2.
+/// Un'immagine senza EXIF (o con EXIF illeggibile) non è un errore: restituisce metadati vuoti. Solo un
+/// formato non supportato o un problema di I/O sono errori.
 pub fn read(path: &Path) -> Result<PhotoMetadata, MetadataError> {
-    // Il file deve almeno esistere: un percorso assente è un errore di I/O, non un panic.
-    let _meta = std::fs::metadata(path)?;
-    let ext = path
-        .extension()
+    std::fs::metadata(path)?; // un percorso assente è un errore di I/O, non un panic
+    let ext = extension_of(path);
+    if !SUPPORTED.contains(&ext.as_str()) {
+        return Err(MetadataError::Unsupported(format!("estensione .{ext}")));
+    }
+    let file = std::fs::File::open(path)?;
+    let mut reader = std::io::BufReader::new(file);
+    let exif = match exif::Reader::new().read_from_container(&mut reader) {
+        Ok(exif) => exif,
+        // senza EXIF, o con EXIF che non si riesce a leggere: nessun metadato, ma nessun errore
+        Err(_) => return Ok(PhotoMetadata::default()),
+    };
+
+    let make = field_string(&exif, exif::Tag::Make);
+    let model = field_string(&exif, exif::Tag::Model);
+    let camera = match (make, model) {
+        (Some(make), Some(model)) => Some(format!("{make} {model}")),
+        (Some(make), None) => Some(make),
+        (None, Some(model)) => Some(model),
+        (None, None) => None,
+    };
+
+    Ok(PhotoMetadata {
+        camera,
+        lens: field_string(&exif, exif::Tag::LensModel),
+        iso: field_u32(&exif, exif::Tag::PhotographicSensitivity),
+        aperture: field_rational(&exif, exif::Tag::FNumber),
+        shutter: field_rational_pair(&exif, exif::Tag::ExposureTime)
+            .map(|(num, den)| format_shutter(num, den)),
+        focal_mm: field_rational(&exif, exif::Tag::FocalLength),
+        gps: None,
+        // il rating vive nell'XMP, non nell'EXIF: arriverà con la lettura XMP
+        rating: None,
+        keywords: Vec::new(),
+    })
+}
+
+fn extension_of(path: &Path) -> String {
+    path.extension()
         .and_then(|e| e.to_str())
         .unwrap_or_default()
-        .to_ascii_lowercase();
-    match ext.as_str() {
-        "jpg" | "jpeg" | "png" | "tif" | "tiff" => Err(MetadataError::Unsupported(
-            "lettura EXIF non ancora implementata (tappa T2)".to_string(),
-        )),
-        other => Err(MetadataError::Unsupported(format!("estensione .{other}"))),
+        .to_ascii_lowercase()
+}
+
+/// Il testo di un campo EXIF, con le virgolette che il display aggiunge rimosse.
+fn field_string(exif: &exif::Exif, tag: exif::Tag) -> Option<String> {
+    let field = exif.get_field(tag, exif::In::PRIMARY)?;
+    let text = field.display_value().to_string();
+    let trimmed = text.trim().trim_matches('"').trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn field_u32(exif: &exif::Exif, tag: exif::Tag) -> Option<u32> {
+    let field = exif.get_field(tag, exif::In::PRIMARY)?;
+    match &field.value {
+        exif::Value::Short(values) => values.first().map(|v| u32::from(*v)),
+        exif::Value::Long(values) => values.first().copied(),
+        other => other.display_as(tag).to_string().trim().parse::<u32>().ok(),
+    }
+}
+
+/// Il valore di un campo razionale come numero decimale.
+fn field_rational(exif: &exif::Exif, tag: exif::Tag) -> Option<f64> {
+    let (num, den) = field_rational_pair(exif, tag)?;
+    if den == 0 {
+        return None;
+    }
+    Some(f64::from(num) / f64::from(den))
+}
+
+/// Il valore di un campo razionale come coppia numeratore/denominatore.
+fn field_rational_pair(exif: &exif::Exif, tag: exif::Tag) -> Option<(u32, u32)> {
+    let field = exif.get_field(tag, exif::In::PRIMARY)?;
+    match &field.value {
+        exif::Value::Rational(values) => values.first().map(|r| (r.num, r.denom)),
+        _ => None,
+    }
+}
+
+/// Formatta il tempo di scatto nella forma consueta (`1/250`).
+fn format_shutter(num: u32, den: u32) -> String {
+    if den == 0 {
+        return String::from("?");
+    }
+    if num == 1 {
+        format!("1/{den}")
+    } else if num == den {
+        String::from("1 s")
+    } else {
+        let seconds = f64::from(num) / f64::from(den);
+        format!("{seconds:.3} s")
     }
 }
 
@@ -90,19 +177,8 @@ mod tests {
     }
 
     #[test]
-    fn a_supported_extension_is_reported_as_not_yet_implemented() {
-        let dir = std::env::temp_dir();
-        let path = dir.join("postcritica-t2-probe.jpg");
-        std::fs::write(&path, b"non e' un vero jpeg").expect("scrivo il file di prova");
-        let result = read(&path);
-        let _ = std::fs::remove_file(&path);
-        assert!(matches!(result, Err(MetadataError::Unsupported(_))));
-    }
-
-    #[test]
     fn an_unknown_extension_says_which_one() {
-        let dir = std::env::temp_dir();
-        let path = dir.join("postcritica-t2-probe.xyz");
+        let path = std::env::temp_dir().join("postcritica-t2-probe.xyz");
         std::fs::write(&path, b"qualunque cosa").expect("scrivo il file di prova");
         let result = read(&path);
         let _ = std::fs::remove_file(&path);
@@ -110,5 +186,16 @@ mod tests {
             matches!(&result, Err(MetadataError::Unsupported(what)) if what.contains("xyz")),
             "atteso Unsupported con 'xyz', trovato {result:?}"
         );
+    }
+
+    #[test]
+    fn an_image_without_exif_is_ok_and_empty() {
+        let path = std::env::temp_dir().join("postcritica-t2-noexif.png");
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]))
+            .save(&path)
+            .expect("scrivo il png");
+        let result = read(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(result.expect("nessun errore"), PhotoMetadata::default());
     }
 }
