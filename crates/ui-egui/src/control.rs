@@ -17,6 +17,7 @@ pub enum Command {
     AnalyzeAll,
     Select(usize),
     SetModule(String),
+    SetView(String),
     /// Carica le immagini della demo (solo per le prove: non è nell'interfaccia).
     Demo,
     Quit,
@@ -119,6 +120,13 @@ fn serve(stream: TcpStream, sender: Sender<Command>, snapshot: Arc<Mutex<Snapsho
                 let _ = sender.send(Command::Demo);
                 serde_json::json!({ "ok": true, "id": id })
             }
+            "setView" => match params.get("view").and_then(|v| v.as_str()) {
+                Some(view) => {
+                    let _ = sender.send(Command::SetView(view.to_string()));
+                    serde_json::json!({ "ok": true, "id": id })
+                }
+                None => serde_json::json!({ "ok": false, "id": id, "error": "manca view" }),
+            },
             "quit" => {
                 let _ = sender.send(Command::Quit);
                 serde_json::json!({ "ok": true, "id": id })

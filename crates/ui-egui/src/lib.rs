@@ -107,6 +107,13 @@ enum ProviderChoice {
     ChatGpt,
 }
 
+/// La vista della libreria: griglia di miniature o foto singola grande.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewKind {
+    Grid,
+    Loupe,
+}
+
 impl ProviderChoice {
     fn key(self) -> &'static str {
         match self {
@@ -175,6 +182,12 @@ struct App {
     ollama_models: Vec<String>,
     models_receiver: Option<Receiver<Vec<String>>>,
     models_requested: bool,
+    /// La vista della libreria e il testo cercato.
+    view: ViewKind,
+    search: String,
+    /// L'anteprima grande della foto scelta, per la vista a foto singola.
+    preview: Option<egui::TextureHandle>,
+    preview_key: Option<String>,
 }
 
 impl App {
@@ -219,6 +232,10 @@ impl App {
             ollama_models: Vec::new(),
             models_receiver: None,
             models_requested: false,
+            view: ViewKind::Grid,
+            search: String::new(),
+            preview: None,
+            preview_key: None,
         }
     }
 
@@ -547,6 +564,13 @@ impl App {
                     }
                 }
                 control::Command::Demo => self.load_demo(ctx),
+                control::Command::SetView(view) => {
+                    self.view = if view.eq_ignore_ascii_case("loupe") || view.eq_ignore_ascii_case("foto") {
+                        ViewKind::Loupe
+                    } else {
+                        ViewKind::Grid
+                    };
+                }
                 control::Command::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             }
         }
@@ -669,38 +693,76 @@ impl App {
     }
 
     fn library(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.heading("Tutte le foto");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let analyzed = self
-                    .photos
-                    .iter()
-                    .filter(|photo| {
-                        photo.path.as_ref().is_some_and(|path| {
-                            self.reports.contains_key(&path.to_string_lossy().into_owned())
-                        })
-                    })
-                    .count();
-                ui.weak(format!("{} foto · {analyzed} analizzate", self.photos.len()));
+        let query = self.search.trim().to_lowercase();
+        let visible: Vec<usize> = self
+            .photos
+            .iter()
+            .enumerate()
+            .filter(|(_, photo)| query.is_empty() || photo.name.to_lowercase().contains(&query))
+            .map(|(index, _)| index)
+            .collect();
+        let analyzed = visible
+            .iter()
+            .filter(|index| {
+                self.photos
+                    .get(**index)
+                    .and_then(|photo| photo.path.as_ref())
+                    .is_some_and(|path| self.reports.contains_key(&path.to_string_lossy().into_owned()))
+            })
+            .count();
+
+        if self.view == ViewKind::Loupe {
+            match self.selected.and_then(|index| self.photos.get(index)) {
+                Some(photo) => {
+                    let (width, height) = photo.inspection.original;
+                    ui.horizontal(|ui| {
+                        ui.strong(&photo.name);
+                        if let Some(day) = &photo.inspection.metadata.shot_at {
+                            ui.weak(day);
+                        }
+                        ui.weak(format!("· {width} × {height}"));
+                    });
+                }
+                None => {
+                    ui.strong("Nessuna foto scelta");
+                }
+            }
+        } else {
+            ui.horizontal(|ui| {
+                ui.heading("Tutte le foto");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.weak(format!("{} foto · {analyzed} analizzate", visible.len()));
+                });
             });
-        });
+        }
         ui.separator();
-        if self.photos.is_empty() {
+
+        if visible.is_empty() {
             ui.centered_and_justified(|ui| {
-                ui.label("Nessuna foto. Apri una cartella dal menu «File».");
+                ui.label(if self.photos.is_empty() {
+                    "Nessuna foto. Apri una cartella dal menu «File»."
+                } else {
+                    "Nessuna foto corrisponde alla ricerca."
+                });
             });
             return;
         }
 
-        let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
-        for (index, photo) in self.photos.iter().enumerate() {
-            let day = photo_day(photo);
-            match groups.iter_mut().find(|(label, _)| *label == day) {
-                Some((_, list)) => list.push(index),
-                None => groups.push((day, vec![index])),
-            }
+        if self.view == ViewKind::Loupe {
+            self.loupe(ui);
+            return;
         }
 
+        let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
+        for &index in &visible {
+            if let Some(photo) = self.photos.get(index) {
+                let day = photo_day(photo);
+                match groups.iter_mut().find(|(label, _)| *label == day) {
+                    Some((_, list)) => list.push(index),
+                    None => groups.push((day, vec![index])),
+                }
+            }
+        }
         let mut clicked = None;
         egui::ScrollArea::vertical().show(ui, |ui| {
             for (label, indices) in &groups {
@@ -720,6 +782,93 @@ impl App {
         });
         if let Some(index) = clicked {
             self.selected = Some(index);
+        }
+    }
+
+    /// La foto scelta, grande, con l'anteprima adattata allo spazio.
+    fn loupe(&self, ui: &mut egui::Ui) {
+        let Some(photo) = self.selected.and_then(|index| self.photos.get(index)) else {
+            ui.centered_and_justified(|ui| {
+                ui.label("Scegli una foto dalla striscia qui sotto.");
+            });
+            return;
+        };
+        let available = ui.available_size();
+        let (original_width, original_height) = photo.inspection.original;
+        let aspect = if original_width > 0 && original_height > 0 {
+            original_width as f32 / original_height as f32
+        } else {
+            photo.inspection.thumb.width() as f32 / photo.inspection.thumb.height().max(1) as f32
+        };
+        let mut size = egui::vec2(available.x, available.x / aspect.max(0.01));
+        if size.y > available.y {
+            size = egui::vec2(available.y * aspect, available.y);
+        }
+        let texture = self.preview.as_ref().unwrap_or(&photo.thumb);
+        ui.centered_and_justified(|ui| {
+            ui.add(egui::Image::new(texture).fit_to_exact_size(size));
+        });
+    }
+
+    /// La striscia di miniature in basso, da cui scegliere la foto.
+    fn filmstrip(&mut self, ui: &mut egui::Ui) {
+        let query = self.search.trim().to_lowercase();
+        let visible: Vec<usize> = self
+            .photos
+            .iter()
+            .enumerate()
+            .filter(|(_, photo)| query.is_empty() || photo.name.to_lowercase().contains(&query))
+            .map(|(index, _)| index)
+            .collect();
+        if visible.is_empty() {
+            return;
+        }
+        let tokens = Tokens::get(ui.ctx());
+        let mut clicked = None;
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for &index in &visible {
+                    if let Some(photo) = self.photos.get(index) {
+                        let image = egui::Image::new(&photo.thumb)
+                            .fit_to_exact_size(egui::vec2(88.0, 62.0))
+                            .sense(egui::Sense::click());
+                        let response = ui.add(image).on_hover_text(&photo.name);
+                        if self.selected == Some(index) {
+                            ui.painter().rect_stroke(
+                                response.rect,
+                                2.0,
+                                egui::Stroke::new(2.5, tokens.accent),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                        if response.clicked() {
+                            clicked = Some(index);
+                        }
+                    }
+                }
+            });
+        });
+        if let Some(index) = clicked {
+            self.selected = Some(index);
+        }
+    }
+
+    /// Prepara l'anteprima grande della foto scelta quando si usa la vista a foto singola.
+    fn ensure_preview(&mut self, ctx: &egui::Context) {
+        if self.view != ViewKind::Loupe {
+            return;
+        }
+        let key = self.selected_key();
+        if key == self.preview_key {
+            return;
+        }
+        self.preview_key = key.clone();
+        self.preview = None;
+        let Some(path) = key.map(PathBuf::from) else {
+            return;
+        };
+        if let Ok(image) = postcritica_raster::decode_thumbnail(&path, 1400) {
+            self.preview = Some(make_texture(ctx, &format!("preview-{}", path.display()), &image));
         }
     }
 
@@ -1095,6 +1244,7 @@ impl eframe::App for App {
         self.drain(&ctx);
         self.handle_control(&ctx);
         self.ensure_models(&ctx);
+        self.ensure_preview(&ctx);
 
         let requested = ctx
             .data_mut(|data| data.remove_temp::<bool>(egui::Id::new("analizza")))
@@ -1221,7 +1371,12 @@ impl eframe::App for App {
                     }
                 });
                 ui.separator();
-                ui.strong("Postcritica");
+                ui.separator();
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.search)
+                        .hint_text("Cerca per nome…")
+                        .desired_width(280.0),
+                );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.weak("Ollama:");
                     ui.add(egui::TextEdit::singleline(&mut self.model).desired_width(150.0));
@@ -1230,11 +1385,30 @@ impl eframe::App for App {
         });
 
         egui::Panel::bottom("barra")
-            .size_range(egui::Rangef::new(28.0, 40.0))
+            .size_range(egui::Rangef::new(30.0, 46.0))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.weak("Dimensione miniature");
-                    ui.add(egui::Slider::new(&mut self.thumb_size, 90.0..=280.0).show_value(false));
+                    if ui
+                        .selectable_label(self.view == ViewKind::Grid, "▦")
+                        .on_hover_text("Griglia")
+                        .clicked()
+                    {
+                        self.view = ViewKind::Grid;
+                    }
+                    if ui
+                        .selectable_label(self.view == ViewKind::Loupe, "▣")
+                        .on_hover_text("Foto singola")
+                        .clicked()
+                    {
+                        self.view = ViewKind::Loupe;
+                    }
+                    ui.separator();
+                    if ui
+                        .add_enabled(self.selected.is_some(), egui::Button::new("Analizza"))
+                        .clicked()
+                    {
+                        self.start_analysis(&ctx);
+                    }
                     ui.separator();
                     for _ in 0..5 {
                         ui.label(egui::RichText::new("★").color(tokens.text_disabled));
@@ -1244,24 +1418,36 @@ impl eframe::App for App {
                         let fraction = self.queue_done as f32 / self.queue_total as f32;
                         ui.add(
                             egui::ProgressBar::new(fraction)
-                                .desired_width(150.0)
+                                .desired_width(140.0)
                                 .text(format!("{}/{}", self.queue_done, self.queue_total)),
                         );
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.weak(&self.status);
+                        ui.separator();
+                        ui.add(egui::Slider::new(&mut self.thumb_size, 90.0..=280.0).show_value(false));
+                        ui.weak("Miniature");
                     });
                 });
             });
+
+        if !self.photos.is_empty() {
+            egui::Panel::bottom("striscia")
+                .size_range(egui::Rangef::new(72.0, 118.0))
+                .show(ui, |ui| {
+                    ui.add_space(2.0);
+                    self.filmstrip(ui);
+                });
+        }
 
         egui::Panel::left("libreria")
             .default_size(tokens.panel_w)
             .size_range(egui::Rangef::new(210.0, 380.0))
             .show(ui, |ui| {
+                ui.add_space(4.0);
+                let _ = ui.selectable_label(true, "Libreria");
+                ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.add_space(4.0);
-                    ui.strong("Libreria");
-                    ui.separator();
                     egui::CollapsingHeader::new("Le mie foto")
                         .default_open(true)
                         .show(ui, |ui| {
@@ -1335,8 +1521,10 @@ impl eframe::App for App {
             .default_size(400.0)
             .size_range(egui::Rangef::new(340.0, 560.0))
             .show(ui, |ui| {
+                ui.add_space(4.0);
+                let _ = ui.selectable_label(true, "Strumenti");
+                ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.add_space(4.0);
                     self.inspector(ui);
                 });
             });
