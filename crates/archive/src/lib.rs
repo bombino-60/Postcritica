@@ -182,6 +182,14 @@ impl SqliteArchive {
         })
     }
 
+    /// Cancella il record con la fonte data, se c'è.
+    pub fn delete(&self, source_key: &str) -> Result<(), ArchiveError> {
+        self.conn
+            .execute("DELETE FROM analyses WHERE source_key = ?1", [source_key])
+            .map_err(backend)?;
+        Ok(())
+    }
+
     /// Importa le analisi dal database del programma Python (schema diverso), con una traduzione
     /// best-effort. Restituisce quante righe ha importato.
     pub fn import_python(&mut self, python_db: &Path) -> Result<usize, ArchiveError> {

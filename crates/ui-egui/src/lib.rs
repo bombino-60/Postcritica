@@ -14,11 +14,13 @@
     clippy::unreachable
 )]
 
+mod control;
 mod theme;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 use postcritica_engine::{
@@ -33,12 +35,25 @@ const DEFAULT_MODEL: &str = "gemma3:4b";
 const DEFAULT_OPENAI_MODEL: &str = "gpt-4o";
 /// Il file dell'archivio locale.
 const ARCHIVE_FILE: &str = "postcritica.db";
+/// La porta del canale di controllo locale.
+const CONTROL_PORT: u16 = 7010;
+/// L'indirizzo locale di Ollama.
+const OLLAMA_URL: &str = "http://localhost:11434";
+
+/// Il formato di esportazione dell'archivio.
+#[derive(Debug, Clone, Copy)]
+enum ExportFormat {
+    Csv,
+    Json,
+    JsonL,
+}
 
 /// Apre la finestra dell'app. Ritorna quando l'utente la chiude.
 pub fn run() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1360.0, 860.0])
+            .with_inner_size([1520.0, 940.0])
+            .with_min_inner_size([1180.0, 720.0])
             .with_title("Postcritica"),
         ..Default::default()
     };
@@ -153,6 +168,13 @@ struct App {
     queue_done: usize,
     /// Il tag scelto nella vista Raccolte.
     selected_tag: Option<String>,
+    /// Il canale di controllo locale.
+    control: Option<Receiver<control::Command>>,
+    snapshot: Option<Arc<Mutex<control::Snapshot>>>,
+    /// I modelli Ollama installati, per il selettore del Setup.
+    ollama_models: Vec<String>,
+    models_receiver: Option<Receiver<Vec<String>>>,
+    models_requested: bool,
 }
 
 impl App {
@@ -171,6 +193,7 @@ impl App {
         let model = setting("ollama_model").unwrap_or_else(|| DEFAULT_MODEL.to_string());
         let openai_model = setting("openai_model").unwrap_or_else(|| DEFAULT_OPENAI_MODEL.to_string());
         let api_key = setting("openai_key").unwrap_or_default();
+        let (control, snapshot) = control::spawn(CONTROL_PORT, cc.egui_ctx.clone());
         Self {
             photos: Vec::new(),
             selected: None,
@@ -191,6 +214,11 @@ impl App {
             queue_total: 0,
             queue_done: 0,
             selected_tag: None,
+            control: Some(control),
+            snapshot: Some(snapshot),
+            ollama_models: Vec::new(),
+            models_receiver: None,
+            models_requested: false,
         }
     }
 
@@ -249,7 +277,22 @@ impl App {
         if analyzer_done {
             self.analyzer = None;
         }
-        if self.reader.is_some() || self.analyzer.is_some() {
+        let mut models_received: Option<Vec<String>> = None;
+        let mut models_ended = false;
+        if let Some(receiver) = &self.models_receiver {
+            match receiver.try_recv() {
+                Ok(models) => models_received = Some(models),
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => models_ended = true,
+            }
+        }
+        if let Some(models) = models_received {
+            self.ollama_models = models;
+            self.models_receiver = None;
+        } else if models_ended {
+            self.models_receiver = None;
+        }
+        if self.reader.is_some() || self.analyzer.is_some() || self.models_receiver.is_some() {
             ctx.request_repaint();
         }
         // Se il batch non è occupato, passa alla prossima foto in coda.
@@ -402,6 +445,21 @@ impl App {
         }
     }
 
+    /// Rimuove la foto scelta dall'archivio.
+    fn remove_from_archive(&mut self) {
+        let Some(key) = self.selected_key() else {
+            return;
+        };
+        if let Some(store) = &self.archive {
+            if let Err(error) = store.delete(&key) {
+                self.status = format!("{error}");
+                return;
+            }
+        }
+        self.reports.remove(&key);
+        self.status = "Rimosso dall'archivio.".to_string();
+    }
+
     /// Esporta il report della foto scelta in PDF.
     fn export_pdf(&mut self) {
         let Some(key) = self.selected_key() else {
@@ -465,6 +523,88 @@ impl App {
             Ok(count) => self.status = format!("Importate {count} analisi da {}.", path.display()),
             Err(error) => self.status = format!("Import non riuscito: {error}"),
         }
+    }
+
+    /// Legge i comandi dal canale di controllo e aggiorna la fotografia dello stato.
+    fn handle_control(&mut self, ctx: &egui::Context) {
+        let mut commands = Vec::new();
+        if let Some(receiver) = &self.control {
+            while let Ok(command) = receiver.try_recv() {
+                commands.push(command);
+            }
+        }
+        for command in commands {
+            match command {
+                control::Command::OpenFolder(path) => self.start_folder(ctx, PathBuf::from(path)),
+                control::Command::AnalyzeAll => self.start_batch(ctx),
+                control::Command::Select(index) => self.selected = Some(index),
+                control::Command::SetModule(name) => {
+                    if let Some(module) = Module::ALL
+                        .into_iter()
+                        .find(|module| module.label().eq_ignore_ascii_case(&name))
+                    {
+                        self.module = module;
+                    }
+                }
+                control::Command::Demo => self.load_demo(ctx),
+                control::Command::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            }
+        }
+        if let Some(snapshot) = &self.snapshot {
+            if let Ok(mut snap) = snapshot.lock() {
+                snap.photos = self.photos.len();
+                snap.analyzed = self.reports.len();
+                snap.archive = self.archive.as_ref().map_or(0, |store| store.count());
+                snap.status = self.status.clone();
+                snap.module = self.module.label().to_string();
+            }
+        }
+    }
+
+    /// Esporta le analisi dell'archivio in un file (CSV, JSON o JSONL).
+    fn export_records(&mut self, format: ExportFormat) {
+        let records = self
+            .archive
+            .as_ref()
+            .and_then(|store| store.history().ok())
+            .unwrap_or_default();
+        if records.is_empty() {
+            self.status = "Nessuna analisi da esportare.".to_string();
+            return;
+        }
+        let refs: Vec<&AnalysisRecord> = records.iter().collect();
+        let (contents, name) = match format {
+            ExportFormat::Csv => (postcritica_engine::to_csv(&refs), "postcritica.csv"),
+            ExportFormat::Json => (postcritica_engine::to_json(&refs), "postcritica.json"),
+            ExportFormat::JsonL => (postcritica_engine::to_jsonl(&refs), "postcritica.jsonl"),
+        };
+        if let Some(path) = rfd::FileDialog::new().set_file_name(name).save_file() {
+            match std::fs::write(&path, contents) {
+                Ok(()) => self.status = format!("Scritto {}.", path.display()),
+                Err(error) => self.status = format!("Non scrivo: {error}"),
+            }
+        }
+    }
+
+    /// Chiede una volta, all'avvio, l'elenco dei modelli Ollama.
+    fn ensure_models(&mut self, ctx: &egui::Context) {
+        if !self.models_requested {
+            self.models_requested = true;
+            self.refresh_models(ctx);
+        }
+    }
+
+    /// Rilegge l'elenco dei modelli Ollama installati, in un thread.
+    fn refresh_models(&mut self, ctx: &egui::Context) {
+        let (sender, receiver) = mpsc::channel();
+        self.models_receiver = Some(receiver);
+        self.status = "Leggo i modelli di Ollama…".to_string();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let models = OllamaCritic::available_models(OLLAMA_URL).unwrap_or_default();
+            let _ = sender.send(models);
+            ctx.request_repaint();
+        });
     }
 
     fn load_demo(&mut self, ctx: &egui::Context) {
@@ -532,13 +672,22 @@ impl App {
         ui.horizontal(|ui| {
             ui.heading("Tutte le foto");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.weak(format!("{} foto", self.photos.len()));
+                let analyzed = self
+                    .photos
+                    .iter()
+                    .filter(|photo| {
+                        photo.path.as_ref().is_some_and(|path| {
+                            self.reports.contains_key(&path.to_string_lossy().into_owned())
+                        })
+                    })
+                    .count();
+                ui.weak(format!("{} foto · {analyzed} analizzate", self.photos.len()));
             });
         });
         ui.separator();
         if self.photos.is_empty() {
             ui.centered_and_justified(|ui| {
-                ui.label("Nessuna foto. Apri una cartella dal menu «File», o premi «Demo».");
+                ui.label("Nessuna foto. Apri una cartella dal menu «File».");
             });
             return;
         }
@@ -768,15 +917,32 @@ impl App {
         });
         ui.add_space(10.0);
         ui.strong("Ollama");
+        let models = self.ollama_models.clone();
+        let mut chosen: Option<String> = None;
         ui.horizontal(|ui| {
             ui.label("Modello:");
-            if ui
-                .add(egui::TextEdit::singleline(&mut self.model).desired_width(200.0))
-                .lost_focus()
-            {
-                self.persist();
+            egui::ComboBox::from_id_salt("ollama-model")
+                .selected_text(self.model.clone())
+                .width(260.0)
+                .show_ui(ui, |ui| {
+                    if models.is_empty() {
+                        ui.weak("nessun modello trovato (Ollama è avviato?)");
+                    }
+                    for name in &models {
+                        if ui.selectable_label(self.model == *name, name).clicked() {
+                            chosen = Some(name.clone());
+                        }
+                    }
+                });
+            if ui.button("Aggiorna elenco").clicked() {
+                self.models_requested = false;
+                self.refresh_models(ui.ctx());
             }
         });
+        if let Some(name) = chosen {
+            self.model = name;
+            self.persist();
+        }
         ui.add_space(10.0);
         ui.strong("ChatGPT (OpenAI)");
         ui.horizontal(|ui| {
@@ -867,7 +1033,9 @@ impl App {
         if let Some(day) = photo.inspection.metadata.shot_at.clone() {
             ui.weak(day);
         }
-        ui.add_space(6.0);
+        ui.add_space(8.0);
+        histogram(ui, &photo.inspection.thumb);
+        ui.add_space(8.0);
         ui.separator();
         ui.strong("Metadati");
         let metadata = &photo.inspection.metadata;
@@ -925,6 +1093,8 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         let tokens = Tokens::get(&ctx);
         self.drain(&ctx);
+        self.handle_control(&ctx);
+        self.ensure_models(&ctx);
 
         let requested = ctx
             .data_mut(|data| data.remove_temp::<bool>(egui::Id::new("analizza")))
@@ -951,10 +1121,6 @@ impl eframe::App for App {
                         }
                         ui.close();
                     }
-                    if ui.button("Demo").clicked() {
-                        self.load_demo(&ctx);
-                        ui.close();
-                    }
                     if ui.button("Analizza tutte").clicked() {
                         self.start_batch(&ctx);
                         ui.close();
@@ -963,16 +1129,96 @@ impl eframe::App for App {
                         self.import_python();
                         ui.close();
                     }
+                    ui.menu_button("Esporta archivio", |ui| {
+                        if ui.button("CSV").clicked() {
+                            self.export_records(ExportFormat::Csv);
+                            ui.close();
+                        }
+                        if ui.button("JSON").clicked() {
+                            self.export_records(ExportFormat::Json);
+                            ui.close();
+                        }
+                        if ui.button("JSONL").clicked() {
+                            self.export_records(ExportFormat::JsonL);
+                            ui.close();
+                        }
+                    });
                     ui.separator();
                     if ui.button("Esci").clicked() {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
                 ui.menu_button("Modifica", |ui| {
-                    ui.weak("(in arrivo)");
+                    if ui
+                        .add_enabled(self.selected.is_some(), egui::Button::new("Deseleziona"))
+                        .clicked()
+                    {
+                        self.selected = None;
+                        ui.close();
+                    }
+                    ui.menu_button("Valutazione", |ui| {
+                        for stars in 0..=5 {
+                            let label = if stars == 0 {
+                                "Nessuna (0)".to_string()
+                            } else {
+                                "★".repeat(stars)
+                            };
+                            if ui.button(label).clicked() {
+                                self.set_rating(stars as i32);
+                                ui.close();
+                            }
+                        }
+                    });
+                    if ui
+                        .add_enabled(
+                            self.selected.is_some(),
+                            egui::Button::new("Rimuovi dall'archivio"),
+                        )
+                        .clicked()
+                    {
+                        self.remove_from_archive();
+                        ui.close();
+                    }
                 });
                 ui.menu_button("Vista", |ui| {
-                    ui.weak("(in arrivo)");
+                    for module in Module::ALL {
+                        if ui
+                            .selectable_label(self.module == module, module.label())
+                            .clicked()
+                        {
+                            self.module = module;
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("Miniature più grandi").clicked() {
+                        self.thumb_size = (self.thumb_size + 20.0).min(280.0);
+                        ui.close();
+                    }
+                    if ui.button("Miniature più piccole").clicked() {
+                        self.thumb_size = (self.thumb_size - 20.0).max(90.0);
+                        ui.close();
+                    }
+                });
+                ui.menu_button("Foto", |ui| {
+                    if ui
+                        .add_enabled(self.selected.is_some(), egui::Button::new("Analizza"))
+                        .clicked()
+                    {
+                        self.start_analysis(&ctx);
+                        ui.close();
+                    }
+                    if ui.button("Analizza tutte").clicked() {
+                        self.start_batch(&ctx);
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(self.selected.is_some(), egui::Button::new("Esporta PDF"))
+                        .clicked()
+                    {
+                        self.export_pdf();
+                        ui.close();
+                    }
                 });
                 ui.separator();
                 ui.strong("Postcritica");
@@ -1010,7 +1256,7 @@ impl eframe::App for App {
 
         egui::Panel::left("libreria")
             .default_size(tokens.panel_w)
-            .size_range(egui::Rangef::new(200.0, 340.0))
+            .size_range(egui::Rangef::new(210.0, 380.0))
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.add_space(4.0);
@@ -1086,8 +1332,8 @@ impl eframe::App for App {
             });
 
         egui::Panel::right("pannello")
-            .default_size(340.0)
-            .size_range(egui::Rangef::new(300.0, 460.0))
+            .default_size(400.0)
+            .size_range(egui::Rangef::new(340.0, 560.0))
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.add_space(4.0);
@@ -1107,6 +1353,52 @@ impl eframe::App for App {
                 Module::Collections => self.collections_view(ui),
                 Module::Setup => self.setup_view(ui),
             });
+    }
+}
+
+/// Un istogramma RGB dell'anteprima.
+fn histogram(ui: &mut egui::Ui, image: &Rgba8) {
+    let tokens = Tokens::get(ui.ctx());
+    let width = ui.available_width().clamp(160.0, 380.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 96.0), egui::Sense::hover());
+    ui.painter().rect_filled(rect, 3.0, tokens.inset);
+
+    let mut red = [0u32; 256];
+    let mut green = [0u32; 256];
+    let mut blue = [0u32; 256];
+    for pixel in image.pixels() {
+        red[pixel[0] as usize] += 1;
+        green[pixel[1] as usize] += 1;
+        blue[pixel[2] as usize] += 1;
+    }
+    let max = red
+        .iter()
+        .chain(&green)
+        .chain(&blue)
+        .copied()
+        .max()
+        .unwrap_or(1)
+        .max(1) as f32;
+
+    let painter = ui.painter_at(rect);
+    let bar_width = rect.width() / 256.0;
+    for (bins, colour) in [
+        (&red, tokens.reject),
+        (&green, tokens.positive),
+        (&blue, tokens.accent),
+    ] {
+        for (index, value) in bins.iter().enumerate() {
+            if *value == 0 {
+                continue;
+            }
+            let height = rect.height() * (*value as f32 / max);
+            let x = rect.min.x + index as f32 * bar_width;
+            let bar = egui::Rect::from_min_max(
+                egui::pos2(x, rect.max.y - height),
+                egui::pos2(x + bar_width + 0.5, rect.max.y),
+            );
+            painter.rect_filled(bar, 0.0, colour.gamma_multiply(0.55));
+        }
     }
 }
 

@@ -56,6 +56,22 @@ pub fn record_to_json(record: &AnalysisRecord) -> String {
     )
 }
 
+/// Esporta tutti i record in un array JSON.
+pub fn to_json(records: &[&AnalysisRecord]) -> String {
+    let items: Vec<String> = records.iter().map(|record| record_to_json(record)).collect();
+    format!("[{}]", items.join(","))
+}
+
+/// Esporta i record in JSONL: un oggetto JSON per riga.
+pub fn to_jsonl(records: &[&AnalysisRecord]) -> String {
+    let mut out = String::new();
+    for record in records {
+        out.push_str(&record_to_json(record));
+        out.push('\n');
+    }
+    out
+}
+
 /// Racchiude fra virgolette un campo che contiene il separatore, virgolette o a capo.
 fn escape_csv(field: &str) -> String {
     if field.contains(';') || field.contains('"') || field.contains('\n') {

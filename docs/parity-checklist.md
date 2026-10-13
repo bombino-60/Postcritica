@@ -1,6 +1,6 @@
 # Checklist di funzioni di Postcritica
 
-> **Ultima revisione:** 2026-10-13 · **Ultimo aggiornamento:** 2026-10-13 · **Modifica:** minor (analisi, archivio, statistiche, raccolte, setup, batch, PDF, import) · **Obiettivo:** parità funzionale con il programma Python
+> **Ultima revisione:** 2026-10-13 · **Ultimo aggiornamento:** 2026-10-13 · **Modifica:** minor (canale di controllo, selettore del modello Ollama, UI leggibile, esportazioni, istogramma) · **Obiettivo:** parità funzionale con il programma Python
 
 Una riga per funzione del programma, con lo stato **nel port Rust**. La colonna *Evidenza* cita la crate o
 il comando quando la funzione c'è. Chi atterra una funzione aggiorna la sua riga nello stesso commit.
@@ -20,10 +20,10 @@ il comando quando la funzione c'è. Chi atterra una funzione aggiorna la sua rig
 | D. Batch e sincronizzazione (JOB) | 1 | 2 | 3 | 0 | 1/4 (25%) | 0/2 (0%) |
 | E. Tag e raccolte (TAXONOMY) | 1 | 1 | 5 | 0 | 1/4 (25%) | 0/3 (0%) |
 | F. Esportazione e report (EXPORT) | 2 | 1 | 2 | 0 | 2/3 (67%) | 0/2 (0%) |
-| G. Interfaccia (UI) | 8 | 0 | 0 | 0 | 4/4 (100%) | 4/4 (100%) |
-| **Totale** | 20 | 7 | 16 | 0 | 15/25 (60%) | 1/17 (6%) |
+| G. Interfaccia (UI) | 9 | 0 | 0 | 0 | 4/4 (100%) | 5/5 (100%) |
+| **Totale** | 21 | 7 | 16 | 0 | 15/25 (60%) | 2/18 (11%) |
 
-Completamento pesato (✅ = 1, 🟡 = ½, 🚫 escluso): **55%** di 43 righe in ambito.
+Completamento pesato (✅ = 1, 🟡 = ½, 🚫 escluso): **56%** di 44 righe in ambito.
 <!-- /parity:summary -->
 
 ## A. Ispezione tecnica (INSPECT)
@@ -103,3 +103,4 @@ Completamento pesato (✅ = 1, 🟡 = ½, 🚫 escluso): **55%** di 43 righe in 
 | PI-UI-COLLECTIONS | Raccolte | P1 | ✅ | modulo Raccolte | |
 | PI-UI-STATS | Statistiche con grafici | P1 | ✅ | modulo Statistiche | quattro grafici |
 | PI-UI-BATCH | Batch con avanzamento | P1 | ✅ | barra in basso | |
+| PI-UI-CONTROL | Canale di controllo locale (JSON-lines su TCP) | P1 | ✅ | `control.rs`, porta 7010 | `status`, `openFolder`, `analyzeAll`, `select`, `setModule`, `quit` |

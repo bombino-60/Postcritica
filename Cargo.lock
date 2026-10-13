@@ -2205,6 +2205,7 @@ dependencies = [
  "postcritica-engine",
  "postcritica-raster",
  "rfd",
+ "serde_json",
 ]
 
 [[package]]
