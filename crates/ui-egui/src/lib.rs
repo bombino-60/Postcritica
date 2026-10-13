@@ -127,6 +127,8 @@ struct App {
     queue: Vec<PathBuf>,
     queue_total: usize,
     queue_done: usize,
+    /// Il tag scelto nella vista Raccolte.
+    selected_tag: Option<String>,
 }
 
 impl App {
@@ -153,6 +155,7 @@ impl App {
             queue: Vec::new(),
             queue_total: 0,
             queue_done: 0,
+            selected_tag: None,
         }
     }
 
@@ -528,6 +531,80 @@ impl App {
         });
     }
 
+    /// Le raccolte per tag, ricavate dalle analisi salvate.
+    fn collections_view(&mut self, ui: &mut egui::Ui) {
+        let records = self
+            .archive
+            .as_ref()
+            .and_then(|store| store.history().ok())
+            .unwrap_or_default();
+        let mut by_tag: HashMap<String, Vec<usize>> = HashMap::new();
+        for (index, record) in records.iter().enumerate() {
+            for tag in &record.tags {
+                by_tag.entry(tag.clone()).or_default().push(index);
+            }
+        }
+        ui.horizontal(|ui| {
+            ui.heading("Raccolte per tag");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.weak(format!("{} tag", by_tag.len()));
+            });
+        });
+        ui.separator();
+        if by_tag.is_empty() {
+            ui.label("Ancora nessun tag: analizza qualche foto.");
+            return;
+        }
+        let mut tags: Vec<(String, usize)> = by_tag
+            .iter()
+            .map(|(tag, list)| (tag.clone(), list.len()))
+            .collect();
+        tags.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        ui.horizontal_wrapped(|ui| {
+            for (tag, count) in &tags {
+                let selected = self.selected_tag.as_deref() == Some(tag.as_str());
+                if ui
+                    .selectable_label(selected, format!("{tag} ({count})"))
+                    .clicked()
+                {
+                    self.selected_tag = Some(tag.clone());
+                }
+            }
+        });
+        ui.add_space(8.0);
+        let tokens = Tokens::get(ui.ctx());
+        match self
+            .selected_tag
+            .clone()
+            .and_then(|tag| by_tag.get(&tag).map(|list| (tag, list.clone())))
+        {
+            Some((tag, indices)) => {
+                ui.strong(format!("Foto con «{tag}»: {}", indices.len()));
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for index in indices {
+                        if let Some(record) = records.get(index) {
+                            ui.horizontal(|ui| {
+                                let score = record
+                                    .score
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| "—".to_string());
+                                ui.label(
+                                    egui::RichText::new(format!("{score:>3}"))
+                                        .strong()
+                                        .color(tokens.score_colour(record.score)),
+                                );
+                                ui.label(&record.file_name);
+                            });
+                        }
+                    }
+                });
+            }
+            None => {
+                ui.weak("Scegli un tag per vedere la raccolta.");
+            }
+        }
+    }
+
     fn inspector(&self, ui: &mut egui::Ui) {
         let Some(photo) = self.selected.and_then(|index| self.photos.get(index)) else {
             ui.add_space(6.0);
@@ -774,11 +851,7 @@ impl eframe::App for App {
                 Module::Library | Module::Analysis => self.library(ui),
                 Module::Archive => self.archive_view(ui),
                 Module::Stats => self.stats_view(ui),
-                Module::Collections => placeholder(
-                    ui,
-                    "Raccolte",
-                    "Le raccolte manuali e la ricerca semantica arriveranno qui.",
-                ),
+                Module::Collections => self.collections_view(ui),
             });
     }
 }
@@ -858,13 +931,6 @@ fn top_values(values: impl Iterator<Item = String>, limit: usize) -> Vec<(String
     list.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     list.truncate(limit);
     list
-}
-
-fn placeholder(ui: &mut egui::Ui, title: &str, note: &str) {
-    ui.add_space(6.0);
-    ui.heading(title);
-    ui.separator();
-    ui.weak(note);
 }
 
 /// Un pulsante quadrato della striscia dei moduli, con l'icona disegnata in codice (lavoro originale).
