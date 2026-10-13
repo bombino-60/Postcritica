@@ -86,13 +86,11 @@ mod tests {
     use super::*;
 
     fn record() -> AnalysisRecord {
-        AnalysisRecord {
-            id: 3,
-            file_name: "vacanza;2024.jpg".to_string(),
-            source_key: "/foto/vacanza.jpg".to_string(),
-            score: Some(88),
-            tags: vec!["mare".to_string(), "tramonto".to_string()],
-        }
+        let mut record = AnalysisRecord::new("vacanza;2024.jpg", "/foto/vacanza.jpg");
+        record.id = 3;
+        record.score = Some(88);
+        record.tags = vec!["mare".to_string(), "tramonto".to_string()];
+        record
     }
 
     #[test]

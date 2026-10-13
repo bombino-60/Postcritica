@@ -7,3 +7,7 @@ rust-version.workspace = true
 description = "Integrazione con i modelli (Ollama, OpenAI) di Postcritica."
 
 [dependencies]
+base64 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ureq = { workspace = true }

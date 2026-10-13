@@ -13,3 +13,6 @@ postcritica-analysis = { workspace = true }
 postcritica-archive = { workspace = true }
 postcritica-metadata = { workspace = true }
 postcritica-report = { workspace = true }
+
+[dev-dependencies]
+image = { workspace = true }

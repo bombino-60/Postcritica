@@ -126,6 +126,17 @@ pub fn rgba_bytes(image: &Rgba8) -> Vec<u8> {
     out
 }
 
+/// Codifica un'immagine in PNG in memoria (per inviarla al modello).
+pub fn encode_png(image: &Rgba8) -> Result<Vec<u8>, RasterError> {
+    let buffer = image::RgbaImage::from_raw(image.width as u32, image.height as u32, rgba_bytes(image))
+        .ok_or(RasterError::Empty)?;
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(buffer)
+        .write_to(&mut cursor, image::ImageFormat::Png)
+        .map_err(|error| RasterError::Decode(error.to_string()))?;
+    Ok(cursor.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

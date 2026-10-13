@@ -1,8 +1,7 @@
-//! L'archivio delle analisi, dietro un'interfaccia.
+//! L'archivio delle analisi: **SQLite**, dietro un'interfaccia, più un archivio in memoria per i test.
 //!
-//! Il programma Python salva tutto in un database SQLite (`storage.py`). Qui l'archivio è descritto da
-//! un `trait` e realizzato, per ora, **in memoria**: il backend SQLite arriva nella tappa T1, così il
-//! resto del programma non conosce i dettagli del database.
+//! Lo schema è nuovo (non quello del programma Python): l'import dal vecchio database è una tappa a
+//! parte. Le scritture sono affidabili e un database corrotto è un errore, mai un panic.
 
 #![forbid(unsafe_code)]
 #![deny(
@@ -14,7 +13,9 @@
     clippy::unreachable
 )]
 
-/// Un record di analisi: il sottoinsieme dei campi che serve a far girare l'engine.
+use std::path::Path;
+
+/// Un record di analisi.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnalysisRecord {
     /// Assegnato dall'archivio al salvataggio; vale 0 per un record nuovo.
@@ -24,6 +25,24 @@ pub struct AnalysisRecord {
     pub source_key: String,
     pub score: Option<i32>,
     pub tags: Vec<String>,
+    pub model: Option<String>,
+    /// Il report completo, così come l'ha restituito il modello.
+    pub report_json: String,
+}
+
+impl AnalysisRecord {
+    /// Un record nuovo, senza id.
+    pub fn new(file_name: impl Into<String>, source_key: impl Into<String>) -> Self {
+        Self {
+            id: 0,
+            file_name: file_name.into(),
+            source_key: source_key.into(),
+            score: None,
+            tags: Vec::new(),
+            model: None,
+            report_json: String::new(),
+        }
+    }
 }
 
 /// Cosa può andare storto parlando con l'archivio.
@@ -51,15 +70,130 @@ pub trait Archive {
     /// Salva un record. Se `source_key` esiste già, lo aggiorna e restituisce l'id esistente.
     fn save(&mut self, record: AnalysisRecord) -> Result<i64, ArchiveError>;
 
-    fn get(&self, id: i64) -> Result<&AnalysisRecord, ArchiveError>;
+    fn get(&self, id: i64) -> Result<AnalysisRecord, ArchiveError>;
 
-    /// Tutti i record, dal più recente (qui semplicemente in ordine di inserto).
-    fn history(&self) -> Vec<&AnalysisRecord>;
+    /// Tutti i record, dal più recente.
+    fn history(&self) -> Result<Vec<AnalysisRecord>, ArchiveError>;
 
     fn count(&self) -> usize;
 }
 
-/// Archivio in memoria: regge i test e serve da base finché non c'è SQLite.
+fn backend(error: rusqlite::Error) -> ArchiveError {
+    ArchiveError::Backend(error.to_string())
+}
+
+/// Le colonne lette, sempre nello stesso ordine.
+const COLUMNS: &str = "id, file_name, source_key, score, tags, model, report_json";
+
+/// L'archivio su un file SQLite.
+pub struct SqliteArchive {
+    conn: rusqlite::Connection,
+}
+
+impl SqliteArchive {
+    /// Apre (o crea) il database e prepara lo schema.
+    pub fn open(path: &Path) -> Result<Self, ArchiveError> {
+        let conn = rusqlite::Connection::open(path).map_err(backend)?;
+        let archive = Self { conn };
+        archive.init()?;
+        Ok(archive)
+    }
+
+    fn init(&self) -> Result<(), ArchiveError> {
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS analyses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    file_name TEXT NOT NULL,
+                    source_key TEXT NOT NULL UNIQUE,
+                    score INTEGER,
+                    tags TEXT NOT NULL DEFAULT '[]',
+                    model TEXT,
+                    report_json TEXT NOT NULL DEFAULT ''
+                );",
+            )
+            .map_err(backend)
+    }
+
+    fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<AnalysisRecord> {
+        let tags_json: String = row.get(4)?;
+        Ok(AnalysisRecord {
+            id: row.get(0)?,
+            file_name: row.get(1)?,
+            source_key: row.get(2)?,
+            score: row.get(3)?,
+            tags: serde_json::from_str(&tags_json).unwrap_or_default(),
+            model: row.get(5)?,
+            report_json: row.get(6)?,
+        })
+    }
+}
+
+impl Archive for SqliteArchive {
+    fn save(&mut self, record: AnalysisRecord) -> Result<i64, ArchiveError> {
+        let tags = serde_json::to_string(&record.tags).map_err(|e| ArchiveError::Backend(e.to_string()))?;
+        self.conn
+            .execute(
+                "INSERT INTO analyses (file_name, source_key, score, tags, model, report_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(source_key) DO UPDATE SET
+                    file_name = excluded.file_name,
+                    score = excluded.score,
+                    tags = excluded.tags,
+                    model = excluded.model,
+                    report_json = excluded.report_json",
+                rusqlite::params![
+                    record.file_name,
+                    record.source_key,
+                    record.score,
+                    tags,
+                    record.model,
+                    record.report_json
+                ],
+            )
+            .map_err(backend)?;
+        self.conn
+            .query_row(
+                "SELECT id FROM analyses WHERE source_key = ?1",
+                [&record.source_key],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(backend)
+    }
+
+    fn get(&self, id: i64) -> Result<AnalysisRecord, ArchiveError> {
+        let sql = format!("SELECT {COLUMNS} FROM analyses WHERE id = ?1");
+        self.conn
+            .query_row(&sql, [id], SqliteArchive::row_to_record)
+            .map_err(|error| match error {
+                rusqlite::Error::QueryReturnedNoRows => ArchiveError::NotFound(id),
+                other => backend(other),
+            })
+    }
+
+    fn history(&self) -> Result<Vec<AnalysisRecord>, ArchiveError> {
+        let sql = format!("SELECT {COLUMNS} FROM analyses ORDER BY id DESC");
+        let mut statement = self.conn.prepare(&sql).map_err(backend)?;
+        let rows = statement
+            .query_map([], SqliteArchive::row_to_record)
+            .map_err(backend)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(backend)?);
+        }
+        Ok(out)
+    }
+
+    fn count(&self) -> usize {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM analyses", [], |row| row.get::<_, i64>(0))
+            .map(|n| n.max(0) as usize)
+            .unwrap_or(0)
+    }
+}
+
+/// Archivio in memoria, per i test.
 #[derive(Debug, Default)]
 pub struct MemoryArchive {
     next_id: i64,
@@ -94,15 +228,16 @@ impl Archive for MemoryArchive {
         }
     }
 
-    fn get(&self, id: i64) -> Result<&AnalysisRecord, ArchiveError> {
+    fn get(&self, id: i64) -> Result<AnalysisRecord, ArchiveError> {
         self.records
             .iter()
             .find(|r| r.id == id)
+            .cloned()
             .ok_or(ArchiveError::NotFound(id))
     }
 
-    fn history(&self) -> Vec<&AnalysisRecord> {
-        self.records.iter().rev().collect()
+    fn history(&self) -> Result<Vec<AnalysisRecord>, ArchiveError> {
+        Ok(self.records.iter().rev().cloned().collect())
     }
 
     fn count(&self) -> usize {
@@ -114,41 +249,47 @@ impl Archive for MemoryArchive {
 mod tests {
     use super::*;
 
-    fn record(file: &str) -> AnalysisRecord {
-        AnalysisRecord {
-            id: 0,
-            file_name: file.to_string(),
-            source_key: format!("/foto/{file}"),
-            score: Some(72),
-            tags: vec!["paesaggio".to_string()],
-        }
+    fn record(file: &str, score: i32) -> AnalysisRecord {
+        let mut record = AnalysisRecord::new(file, format!("/foto/{file}"));
+        record.score = Some(score);
+        record.tags = vec!["paesaggio".to_string()];
+        record.model = Some("gemma3:4b".to_string());
+        record.report_json = "{\"punteggio_totale\":72}".to_string();
+        record
     }
 
-    #[test]
-    fn save_then_get_returns_the_same_record() {
-        let mut archive = MemoryArchive::new();
-        let id = archive.save(record("a.jpg")).expect("salvataggio");
-        assert_eq!(archive.count(), 1);
+    fn round_trip(archive: &mut dyn Archive) {
+        let id = archive.save(record("a.jpg", 72)).expect("salvataggio");
         let stored = archive.get(id).expect("lettura");
         assert_eq!(stored.file_name, "a.jpg");
         assert_eq!(stored.score, Some(72));
-    }
+        assert_eq!(stored.tags, vec!["paesaggio".to_string()]);
+        assert_eq!(stored.model.as_deref(), Some("gemma3:4b"));
 
-    #[test]
-    fn saving_the_same_photo_twice_updates_instead_of_duplicating() {
-        let mut archive = MemoryArchive::new();
-        let first = archive.save(record("a.jpg")).expect("primo");
-        let mut again = record("a.jpg");
-        again.score = Some(90);
-        let second = archive.save(again).expect("secondo");
-        assert_eq!(first, second);
+        // salvare la stessa foto due volte aggiorna, non duplica
+        let updated = archive.save(record("a.jpg", 90)).expect("aggiornamento");
+        assert_eq!(id, updated);
         assert_eq!(archive.count(), 1);
-        assert_eq!(archive.get(first).expect("lettura").score, Some(90));
+        assert_eq!(archive.get(id).expect("lettura").score, Some(90));
+
+        // lo storico ha il record
+        assert_eq!(archive.history().expect("storico").len(), 1);
+
+        // un id assente è un errore, non un panic
+        assert_eq!(archive.get(9999), Err(ArchiveError::NotFound(9999)));
     }
 
     #[test]
-    fn a_missing_record_is_an_error_not_a_panic() {
-        let archive = MemoryArchive::new();
-        assert_eq!(archive.get(7), Err(ArchiveError::NotFound(7)));
+    fn the_memory_archive_round_trips() {
+        round_trip(&mut MemoryArchive::new());
+    }
+
+    #[test]
+    fn the_sqlite_archive_round_trips() {
+        let dir = std::env::temp_dir().join(format!("postcritica-archive-{}", std::process::id()));
+        let _ = std::fs::remove_file(&dir);
+        let mut archive = SqliteArchive::open(&dir).expect("apertura");
+        round_trip(&mut archive);
+        let _ = std::fs::remove_file(&dir);
     }
 }

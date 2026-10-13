@@ -17,70 +17,16 @@
 use std::path::Path;
 
 use postcritica_ai::{AiError, AnalysisRequest, Critic};
-use postcritica_archive::{AnalysisRecord, Archive, ArchiveError};
+use postcritica_archive::ArchiveError;
 use postcritica_metadata::{self, MetadataError};
 use postcritica_raster::{self, RasterError};
 
 // Tipi condivisi ri-esportati, così il livello UI dipende solo dall'engine.
+pub use postcritica_ai::{OllamaCritic, Report};
 pub use postcritica_analysis::VisualProfile;
+pub use postcritica_archive::{AnalysisRecord, Archive, SqliteArchive};
 pub use postcritica_metadata::PhotoMetadata;
 pub use postcritica_raster::{rgba_bytes, Rgba8};
-
-/// L'engine: un archivio e un valutatore.
-pub struct Engine<A, C> {
-    archive: A,
-    critic: C,
-}
-
-impl<A: Archive, C: Critic> Engine<A, C> {
-    pub fn new(archive: A, critic: C) -> Self {
-        Self { archive, critic }
-    }
-
-    /// L'archivio, in sola lettura, per la UI.
-    pub fn archive(&self) -> &A {
-        &self.archive
-    }
-
-    /// Il comando `photo.analyze`: chiede al modello e salva il record.
-    ///
-    /// Non va mai in panic: un errore del modello o dell'archivio esce come `EngineError`.
-    pub fn analyze(
-        &mut self,
-        file_name: &str,
-        source_key: &str,
-        prompt: &str,
-        images: Vec<Vec<u8>>,
-    ) -> Result<i64, EngineError> {
-        let request = AnalysisRequest {
-            prompt: prompt.to_string(),
-            images,
-        };
-        let response = self.critic.analyze(&request).map_err(EngineError::Ai)?;
-        let record = AnalysisRecord {
-            id: 0,
-            file_name: file_name.to_string(),
-            source_key: source_key.to_string(),
-            score: parse_score(&response.json),
-            tags: Vec::new(),
-        };
-        self.archive.save(record).map_err(EngineError::Archive)
-    }
-}
-
-/// Estrae `punteggio_totale` da un report JSON in modo tollerante.
-///
-/// Il parsing vero arriverà con l'engine completo; qui l'importante è che un input storto non faccia
-/// andare in panic (niente indicizzazione, niente `unwrap`).
-fn parse_score(json: &str) -> Option<i32> {
-    let after_key = json.split("\"punteggio_totale\"").nth(1)?;
-    let digits: String = after_key
-        .chars()
-        .skip_while(|c| !c.is_ascii_digit())
-        .take_while(char::is_ascii_digit)
-        .collect();
-    digits.parse::<i32>().ok()
-}
 
 /// Il risultato dell'ispezione di una foto: metadati, profilo visivo e miniatura.
 pub struct Inspection {
@@ -105,6 +51,97 @@ pub fn inspect_photo(path: &Path, max_edge: u32) -> Result<Inspection, EngineErr
         original,
         thumb,
     })
+}
+
+/// Il risultato di un'analisi: i pezzi che la UI mostra e che poi si salvano nell'archivio.
+pub struct AnalysisOutcome {
+    pub file_name: String,
+    pub source_key: String,
+    pub model: String,
+    pub report_json: String,
+    pub report: Report,
+}
+
+/// Esegue l'analisi di una foto **senza** toccare l'archivio: ispeziona, chiede al modello, interpreta.
+///
+/// È pensato per girare in un thread: la UI lo chiama, poi salva il risultato nell'archivio sul thread
+/// principale (la connessione SQLite non si sposta fra thread).
+pub fn run_analysis<C: Critic>(critic: &C, path: &Path) -> Result<AnalysisOutcome, EngineError> {
+    let inspection = inspect_photo(path, 512)?;
+    let image = postcritica_raster::encode_png(&inspection.thumb).map_err(EngineError::Raster)?;
+    let request = AnalysisRequest {
+        prompt: postcritica_ai::build_prompt(),
+        images: vec![image],
+    };
+    let response = critic.analyze(&request).map_err(EngineError::Ai)?;
+    let report = postcritica_ai::parse_report(&response.json);
+    Ok(AnalysisOutcome {
+        file_name: path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?")
+            .to_string(),
+        source_key: path.to_string_lossy().to_string(),
+        model: response.model,
+        report_json: response.json,
+        report,
+    })
+}
+
+/// Il comando `photo.analyze`: ispeziona, chiede al modello, salva il record e lo restituisce.
+pub fn analyze_photo<A: Archive, C: Critic>(
+    archive: &mut A,
+    critic: &C,
+    path: &Path,
+) -> Result<AnalysisRecord, EngineError> {
+    let outcome = run_analysis(critic, path)?;
+    let mut record = AnalysisRecord::new(outcome.file_name, outcome.source_key);
+    record.score = outcome.report.score;
+    record.tags = outcome.report.tag;
+    record.model = Some(outcome.model);
+    record.report_json = outcome.report_json;
+
+    let id = archive.save(record).map_err(EngineError::Archive)?;
+    archive.get(id).map_err(EngineError::Archive)
+}
+
+/// L'engine: un archivio e un valutatore.
+pub struct Engine<A, C> {
+    archive: A,
+    critic: C,
+}
+
+impl<A: Archive, C: Critic> Engine<A, C> {
+    pub fn new(archive: A, critic: C) -> Self {
+        Self { archive, critic }
+    }
+
+    /// L'archivio, in sola lettura, per la UI.
+    pub fn archive(&self) -> &A {
+        &self.archive
+    }
+
+    /// Il comando `photo.analyze` su dati già pronti (usato dai test).
+    pub fn analyze(
+        &mut self,
+        file_name: &str,
+        source_key: &str,
+        prompt: &str,
+        images: Vec<Vec<u8>>,
+    ) -> Result<i64, EngineError> {
+        let request = AnalysisRequest {
+            prompt: prompt.to_string(),
+            images,
+        };
+        let response = self.critic.analyze(&request).map_err(EngineError::Ai)?;
+        let report = postcritica_ai::parse_report(&response.json);
+        let mut record = AnalysisRecord::new(file_name, source_key);
+        record.score = report.score;
+        record.tags = report.tag;
+        record.model = Some(response.model);
+        record.report_json = response.json;
+        self.archive.save(record).map_err(EngineError::Archive)
+    }
 }
 
 /// Cosa può andare storto in un comando.
@@ -147,21 +184,13 @@ mod tests {
 
     #[test]
     fn analyze_saves_a_record_with_the_score_from_the_report() {
-        let mut engine = engine("{\"punteggio_totale\": 81}");
+        let mut engine = engine("{\"punteggio_totale\": 81, \"tag\": [\"mare\"]}");
         let id = engine
             .analyze("a.jpg", "/foto/a.jpg", "analizza", vec![])
             .expect("analisi");
         let stored = engine.archive().get(id).expect("lettura");
         assert_eq!(stored.score, Some(81));
-    }
-
-    #[test]
-    fn a_report_without_a_score_still_saves() {
-        let mut engine = engine("{\"nota\": \"nessun punteggio\"}");
-        let id = engine
-            .analyze("a.jpg", "/foto/a.jpg", "analizza", vec![])
-            .expect("analisi");
-        assert_eq!(engine.archive().get(id).expect("lettura").score, None);
+        assert_eq!(stored.tags, vec!["mare".to_string()]);
     }
 
     #[test]

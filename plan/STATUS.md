@@ -1,19 +1,20 @@
 # Stato
 
-**Tappa corrente:** T0 chiusa; in corso una **fetta verticale usabile** (parte di T2 e T7).
-**Prossimo task:** chiudere T1 (`archive`, SQLite + import dal Python), poi completare T2.
+**Tappa corrente:** il cuore del programma è in piedi — analisi con Ollama, archivio SQLite, veste grafica.
+**Prossimo task:** la schermata **Archivio e cronologia** (vedere le analisi salvate), poi il **batch**.
 
 ## Fatto
-- Regole e standard in italiano (`AGENTS.md`, `standards/`), tarati sul Rust.
-- Architettura di destinazione e mappa dal Python (`docs/architecture.md`); piano a tappe; documenti.
-- Workspace Cargo con 8 crate stratificati (L0–L5) + il binario `postcritica`; `xtask` con
-  `ci`/`layers`/`assets`/`parity`.
-- Licenza MIT OR Apache-2.0; repository git collegato al remote `origin`.
-- **Fetta usabile:** finestra egui con **griglia di miniature**, **ispettore** (metadati EXIF + profilo
-  visivo) e pulsante **Demo**; lettura di una cartella in un thread separato.
-- `raster::decode_thumbnail` (decodifica con tetto di memoria) e `metadata::read` (EXIF con
-  `kamadak-exif`) reali.
-- **26 test verdi**; `cargo xtask ci` verde; **eseguibile release** in `dist/postcritica.exe`.
+- Regole e standard in italiano; architettura, piano e documenti di avanzamento.
+- Workspace Cargo con 8 crate stratificati (L0–L5) + il binario `postcritica`; `xtask` con i gate.
+- Licenza MIT OR Apache-2.0; repository collegato a `origin` (`bombino-60/Postcritica`).
+- **Analisi di una foto con Ollama** (`gemma3:4b` predefinito, modificabile dalla barra): il report
+  (punteggio, tag, punti di forza e debolezza) compare a destra ed è **salvato in SQLite**.
+- **Libreria**: griglia di miniature (da una cartella o dalla demo), ispettore con **metadati EXIF** e
+  **profilo visivo**.
+- **Veste grafica della tua app**: palette scura con i tuoi colori.
+- `raster` (decodifica/miniatura/PNG), `metadata` (EXIF), `ai` (Ollama + report), `archive` (SQLite),
+  `engine` (ispezione e analisi), `report` (CSV/JSON) — tutte con test.
+- **Eseguibile release** in `dist/postcritica.exe`.
 
 ## In corso
 - Nulla di aperto: la fetta è chiusa e committata.
@@ -22,17 +23,16 @@
 - Nessuno.
 
 ## Assunzioni registrate
-- Interfaccia: app desktop nativa egui/eframe.
+- Interfaccia: app desktop nativa egui/eframe, con la palette della tua app.
 - Codice: commenti/stringhe in italiano, identificatori in inglese.
-- Provider AI: Ollama e ChatGPT/OpenAI (non ancora collegati).
+- Provider AI: **Ollama** collegato (modello predefinito `gemma3:4b`); ChatGPT/OpenAI dietro la stessa
+  interfaccia, più avanti.
 - SQLite è l'unica dipendenza nativa ammessa.
 - Obiettivo di fase: **parità funzionale** col Python.
-- Dati: **schema nuovo** + **strumento di import** dal Python (T1).
 
 ## Metriche
-- Test: 26 verdi.
-- Eseguibile release: ~8 MB.
-- Compilazione del workspace: OK.
+- Test: unitari verdi; test d'integrazione reale con Ollama (`--ignored`).
+- Eseguibile release: ~12 MB.
 
 ## Decisioni del proprietario in sospeso
 - Se introdurre il canale di controllo e MCP (tappa T8).

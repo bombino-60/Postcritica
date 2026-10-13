@@ -1,7 +1,8 @@
 //! L'interfaccia desktop (egui/eframe) di Postcritica.
 //!
-//! Prima versione usabile: si apre una cartella di foto (o si carica una demo), si vedono le miniature
-//! in una griglia e, selezionandone una, i metadati e il profilo visivo. Tutto in locale, senza rete.
+//! Prima versione usabile: si apre una cartella di foto (o si carica una demo), si vedono le miniature in
+//! una griglia e, selezionandone una, i metadati e il profilo visivo. Premendo «Analizza», la foto viene
+//! inviata a Ollama e il report compare a destra, salvato nell'archivio SQLite.
 
 #![forbid(unsafe_code)]
 #![deny(
@@ -13,67 +14,126 @@
     clippy::unreachable
 )]
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use eframe::egui;
-use postcritica_engine::{inspect_photo, rgba_bytes, Inspection, PhotoMetadata, Rgba8, VisualProfile};
+use postcritica_engine::{
+    inspect_photo, rgba_bytes, run_analysis, AnalysisOutcome, AnalysisRecord, Archive, Inspection,
+    OllamaCritic, PhotoMetadata, Rgba8, SqliteArchive, VisualProfile,
+};
+
+/// Il modello Ollama predefinito (come il programma Python).
+const DEFAULT_MODEL: &str = "gemma3:4b";
+/// Il file dell'archivio locale.
+const ARCHIVE_FILE: &str = "postcritica.db";
 
 /// Apre la finestra dell'app. Ritorna quando l'utente la chiude.
 pub fn run() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1100.0, 720.0])
+            .with_inner_size([1180.0, 760.0])
             .with_title("Postcritica"),
         ..Default::default()
     };
-    eframe::run_native("Postcritica", options, Box::new(|_cc| Ok(Box::new(App::new()))))
+    eframe::run_native(
+        "Postcritica",
+        options,
+        Box::new(|cc| {
+            apply_theme(&cc.egui_ctx);
+            Ok(Box::new(App::new(cc)))
+        }),
+    )
 }
 
 /// Una foto mostrata nella griglia.
 struct Photo {
     name: String,
+    /// Il file sul disco; `None` per le immagini della demo.
+    path: Option<PathBuf>,
     thumb: egui::TextureHandle,
     inspection: Inspection,
 }
 
-/// Un messaggio dal thread che legge la cartella.
+/// Il report di un'analisi, pronto da mostrare.
+struct AnalysisReport {
+    score: Option<i32>,
+    tags: Vec<String>,
+    strengths: Vec<String>,
+    weaknesses: Vec<String>,
+    summary: Option<String>,
+    model: String,
+}
+
+/// Un messaggio dai thread (lettura cartella, analisi).
 enum Msg {
     Photo(Box<Photo>),
     Progress(usize, usize),
     Error(String),
     Done,
+    Analyzed(Box<AnalysisOutcome>),
 }
 
 /// Lo stato dell'app.
 struct App {
     photos: Vec<Photo>,
     selected: Option<usize>,
-    receiver: Option<Receiver<Msg>>,
+    reader: Option<Receiver<Msg>>,
+    analyzer: Option<Receiver<Msg>>,
     status: String,
+    model: String,
+    archive: Option<SqliteArchive>,
+    reports: HashMap<String, AnalysisReport>,
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let _ = cc;
+        let archive = SqliteArchive::open(Path::new(ARCHIVE_FILE)).ok();
+        let status = match &archive {
+            Some(store) => format!(
+                "Pronto. Archivio: {ARCHIVE_FILE} ({} analisi salvate).",
+                store.count()
+            ),
+            None => format!("Pronto, ma non riesco ad aprire l'archivio {ARCHIVE_FILE}."),
+        };
         Self {
             photos: Vec::new(),
             selected: None,
-            receiver: None,
-            status: "Pronto. Apri una cartella, oppure premi «Demo».".to_string(),
+            reader: None,
+            analyzer: None,
+            status,
+            model: DEFAULT_MODEL.to_string(),
+            archive,
+            reports: HashMap::new(),
         }
     }
 
-    /// Raccoglie i messaggi del thread di lettura e aggiorna lo stato.
+    /// Raccoglie i messaggi dei thread e aggiorna lo stato.
     fn drain(&mut self, ctx: &egui::Context) {
         let mut messages = Vec::new();
-        let mut done = false;
-        if let Some(receiver) = &self.receiver {
+        let mut reader_done = false;
+        if let Some(receiver) = &self.reader {
             loop {
                 match receiver.try_recv() {
                     Ok(message) => messages.push(message),
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
-                        done = true;
+                        reader_done = true;
+                        break;
+                    }
+                }
+            }
+        }
+        let mut analyzer_done = false;
+        if let Some(receiver) = &self.analyzer {
+            loop {
+                match receiver.try_recv() {
+                    Ok(message) => messages.push(message),
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        analyzer_done = true;
                         break;
                     }
                 }
@@ -85,29 +145,89 @@ impl App {
                 Msg::Progress(done, total) => self.status = format!("{done}/{total}…"),
                 Msg::Error(message) => self.status = message,
                 Msg::Done => {
-                    done = true;
+                    reader_done = true;
                     self.status = format!("{} foto.", self.photos.len());
                 }
+                Msg::Analyzed(outcome) => self.store_outcome(*outcome),
             }
         }
-        if done {
-            self.receiver = None;
-            self.status = format!("{} foto.", self.photos.len());
+        if reader_done {
+            self.reader = None;
         }
-        if self.receiver.is_some() {
+        if analyzer_done {
+            self.analyzer = None;
+        }
+        if self.reader.is_some() || self.analyzer.is_some() {
             ctx.request_repaint();
         }
     }
 
-    /// Avvia la lettura di una cartella in un thread separato, così la finestra non si blocca.
+    /// Salva l'analisi nell'archivio e la rende visibile nella UI.
+    fn store_outcome(&mut self, outcome: AnalysisOutcome) {
+        if let Some(store) = &mut self.archive {
+            let mut record = AnalysisRecord::new(outcome.file_name.clone(), outcome.source_key.clone());
+            record.score = outcome.report.score;
+            record.tags = outcome.report.tag.clone();
+            record.model = Some(outcome.model.clone());
+            record.report_json = outcome.report_json.clone();
+            if let Err(error) = store.save(record) {
+                self.status = format!("{error}");
+            }
+        }
+        self.reports.insert(
+            outcome.source_key.clone(),
+            AnalysisReport {
+                score: outcome.report.score,
+                tags: outcome.report.tag.clone(),
+                strengths: outcome.report.strengths.clone(),
+                weaknesses: outcome.report.weaknesses.clone(),
+                summary: outcome.report.sintesi.clone(),
+                model: outcome.model.clone(),
+            },
+        );
+        self.status = format!("Analisi completata per {}.", outcome.file_name);
+    }
+
+    /// Avvia la lettura di una cartella in un thread separato.
     fn start_folder(&mut self, ctx: &egui::Context, dir: PathBuf) {
         self.photos.clear();
         self.selected = None;
         let (sender, receiver) = mpsc::channel();
-        self.receiver = Some(receiver);
+        self.reader = Some(receiver);
         self.status = format!("Leggo {}…", dir.display());
         let ctx = ctx.clone();
         std::thread::spawn(move || read_folder(&dir, &ctx, &sender));
+    }
+
+    /// Avvia l'analisi della foto scelta, in un thread separato.
+    fn start_analysis(&mut self, ctx: &egui::Context) {
+        let Some(photo) = self.selected.and_then(|index| self.photos.get(index)) else {
+            self.status = "Seleziona prima una foto.".to_string();
+            return;
+        };
+        let Some(path) = photo.path.clone() else {
+            self.status =
+                "Le immagini della demo non hanno un file da analizzare: apri una cartella.".to_string();
+            return;
+        };
+        let name = photo.name.clone();
+        let model = self.model.clone();
+        let (sender, receiver) = mpsc::channel();
+        self.analyzer = Some(receiver);
+        self.status = format!("Analizzo {name} con {model}… (può richiedere qualche minuto)");
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let critic = OllamaCritic::new(model);
+            match run_analysis(&critic, &path) {
+                Ok(outcome) => {
+                    let _ = sender.send(Msg::Analyzed(Box::new(outcome)));
+                }
+                Err(error) => {
+                    let _ = sender.send(Msg::Error(format!("Analisi non riuscita: {error}")));
+                }
+            }
+            ctx.request_repaint();
+        });
     }
 
     /// Costruisce dodici foto procedurali, così c'è sempre qualcosa da guardare.
@@ -123,10 +243,12 @@ impl App {
                     let fy = y as f64 / height as f64;
                     let phase = index as f64 / 12.0;
                     let stripe = ((fx * 9.0 + phase * 8.0).sin() * 0.5 + 0.5).powi(2);
-                    let r = (fx * 255.0) as u8;
-                    let g = (fy * 255.0) as u8;
-                    let b = (stripe * 255.0) as u8;
-                    data.push([r, g, b, 255]);
+                    data.push([
+                        (fx * 255.0) as u8,
+                        (fy * 255.0) as u8,
+                        (stripe * 255.0) as u8,
+                        255,
+                    ]);
                 }
             }
             let Some(image) = Rgba8::new(width, height, data) else {
@@ -136,6 +258,7 @@ impl App {
             let thumb = make_texture(ctx, &format!("demo-{index}"), &image);
             self.photos.push(Photo {
                 name: format!("demo-{index:02}.png"),
+                path: None,
                 thumb,
                 inspection: Inspection {
                     metadata: PhotoMetadata::default(),
@@ -148,7 +271,13 @@ impl App {
         self.status = format!("{} foto nella demo.", self.photos.len());
     }
 
-    /// Il pannello di destra: metadati e profilo visivo della foto scelta.
+    /// La chiave della foto scelta, per cercarne il report.
+    fn selected_key(&self) -> Option<String> {
+        let photo = self.photos.get(self.selected?)?;
+        photo.path.as_ref().map(|path| path.to_string_lossy().to_string())
+    }
+
+    /// Il pannello di destra: metadati, profilo visivo e report.
     fn inspector(&self, ui: &mut egui::Ui) {
         let Some(photo) = self.selected.and_then(|index| self.photos.get(index)) else {
             ui.label("Seleziona una foto.");
@@ -168,7 +297,6 @@ impl App {
         field(ui, "Apertura", metadata.aperture.map(|v| format!("f/{v:.1}")));
         field(ui, "Tempo", metadata.shutter.clone());
         field(ui, "Focale", metadata.focal_mm.map(|v| format!("{v:.0} mm")));
-        field(ui, "Rating", metadata.rating.map(|v| v.to_string()));
         ui.add_space(6.0);
         ui.separator();
         ui.strong("Profilo visivo");
@@ -176,11 +304,39 @@ impl App {
         ui.label(format!("Luminosità: {:.0}%", profile.brightness * 100.0));
         ui.label(format!("Contrasto: {:.0}%", profile.contrast * 100.0));
         ui.add_space(6.0);
-        ui.label(
-            egui::RichText::new("L'analisi con Ollama o ChatGPT arriva più avanti.")
-                .small()
-                .weak(),
-        );
+        ui.separator();
+        ui.strong("Valutazione");
+
+        let report = self.selected_key().and_then(|key| self.reports.get(&key));
+        match report {
+            Some(report) => {
+                let score = report
+                    .score
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "—".to_string());
+                ui.label(
+                    egui::RichText::new(format!("Punteggio: {score} / 100"))
+                        .heading()
+                        .color(score_colour(report.score)),
+                );
+                ui.add_space(2.0);
+                ui.weak(format!("Modello: {}", report.model));
+                if let Some(summary) = &report.summary {
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(summary).italics());
+                }
+                if !report.tags.is_empty() {
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new("Tag").strong());
+                    ui.label(report.tags.join(" · "));
+                }
+                list(ui, "Punti di forza", &report.strengths, true);
+                list(ui, "Punti di debolezza", &report.weaknesses, false);
+            }
+            None => {
+                ui.weak("Nessuna analisi. Seleziona una foto e premi «Analizza».");
+            }
+        }
     }
 }
 
@@ -201,14 +357,23 @@ impl eframe::App for App {
                     self.load_demo(&ctx);
                 }
                 ui.separator();
-                ui.label(&self.status);
+                if ui
+                    .add_enabled(self.selected.is_some(), egui::Button::new("Analizza"))
+                    .clicked()
+                {
+                    self.start_analysis(&ctx);
+                }
+                ui.label("Modello:");
+                ui.add(egui::TextEdit::singleline(&mut self.model).desired_width(150.0));
+                ui.separator();
+                ui.weak(&self.status);
             });
             ui.add_space(4.0);
         });
 
         egui::Panel::right("ispettore")
-            .min_size(280.0)
-            .default_size(320.0)
+            .min_size(320.0)
+            .default_size(360.0)
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| self.inspector(ui));
             });
@@ -237,9 +402,70 @@ impl eframe::App for App {
     }
 }
 
+/// Applica la palette della tua app (sfondo, pannelli, accenti) al tema di egui.
+fn apply_theme(ctx: &egui::Context) {
+    let background = egui::Color32::from_rgb(0x0b, 0x0d, 0x10);
+    let panel = egui::Color32::from_rgb(0x13, 0x17, 0x1c);
+    let line = egui::Color32::from_rgb(0x2a, 0x32, 0x3d);
+    let text = egui::Color32::from_rgb(0xed, 0xf1, 0xf5);
+    let muted = egui::Color32::from_rgb(0x92, 0x9c, 0xa8);
+    let blue = egui::Color32::from_rgb(0x5d, 0xa9, 0xff);
+    let raised = egui::Color32::from_rgb(0x1a, 0x1f, 0x26);
+    let hovered = egui::Color32::from_rgb(0x24, 0x2b, 0x35);
+
+    let mut visuals = egui::Visuals::dark();
+    visuals.panel_fill = panel;
+    visuals.window_fill = panel;
+    visuals.extreme_bg_color = background;
+    visuals.override_text_color = Some(text);
+    visuals.window_stroke = egui::Stroke::new(1.0, line);
+    visuals.hyperlink_color = blue;
+    visuals.selection.bg_fill = blue;
+    visuals.selection.stroke = egui::Stroke::new(1.0, text);
+    visuals.widgets.noninteractive.bg_fill = panel;
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, line);
+    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, muted);
+    visuals.widgets.inactive.weak_bg_fill = raised;
+    visuals.widgets.inactive.bg_fill = raised;
+    visuals.widgets.hovered.weak_bg_fill = hovered;
+    visuals.widgets.hovered.bg_fill = hovered;
+    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, blue);
+    visuals.widgets.active.weak_bg_fill = blue;
+    visuals.widgets.active.bg_fill = blue;
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, blue);
+    ctx.set_visuals(visuals);
+}
+
+/// Il colore del punteggio, dal rosso al verde.
+fn score_colour(score: Option<i32>) -> egui::Color32 {
+    match score {
+        Some(value) if value >= 75 => egui::Color32::from_rgb(0x54, 0xc9, 0x85),
+        Some(value) if value >= 50 => egui::Color32::from_rgb(0xe8, 0xb6, 0x5a),
+        Some(_) => egui::Color32::from_rgb(0xef, 0x6a, 0x68),
+        None => egui::Color32::from_rgb(0x92, 0x9c, 0xa8),
+    }
+}
+
+/// Un elenco puntato, verde per i punti di forza e rosso per le debolezze.
+fn list(ui: &mut egui::Ui, title: &str, items: &[String], positive: bool) {
+    if items.is_empty() {
+        return;
+    }
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new(title).strong());
+    let colour = if positive {
+        egui::Color32::from_rgb(0x54, 0xc9, 0x85)
+    } else {
+        egui::Color32::from_rgb(0xef, 0x6a, 0x68)
+    };
+    for item in items {
+        ui.label(egui::RichText::new(format!("• {item}")).color(colour));
+    }
+}
+
 /// Disegna una miniatura cliccabile, con la cornice quando è quella scelta.
 fn thumbnail(ui: &mut egui::Ui, photo: &Photo, selected: bool) -> egui::Response {
-    let size = egui::vec2(132.0, 100.0);
+    let size = egui::vec2(148.0, 108.0);
     let image = egui::Image::new(&photo.thumb)
         .fit_to_exact_size(size)
         .sense(egui::Sense::click());
@@ -248,7 +474,7 @@ fn thumbnail(ui: &mut egui::Ui, photo: &Photo, selected: bool) -> egui::Response
         ui.painter().rect_stroke(
             response.rect,
             3.0,
-            egui::Stroke::new(2.5, egui::Color32::from_rgb(0, 150, 255)),
+            egui::Stroke::new(2.5, egui::Color32::from_rgb(0x5d, 0xa9, 0xff)),
             egui::StrokeKind::Inside,
         );
     }
@@ -292,6 +518,7 @@ fn read_folder(dir: &Path, ctx: &egui::Context, sender: &Sender<Msg>) {
                 let thumb = make_texture(ctx, &path.display().to_string(), &inspection.thumb);
                 let _ = sender.send(Msg::Photo(Box::new(Photo {
                     name,
+                    path: Some(path.clone()),
                     thumb,
                     inspection,
                 })));
