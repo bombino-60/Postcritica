@@ -72,7 +72,7 @@ pub struct AnalysisOutcome {
 /// È pensato per girare in un thread: la UI lo chiama, poi salva il risultato nell'archivio sul thread
 /// principale (la connessione SQLite non si sposta fra thread).
 pub fn run_analysis<C: Critic>(critic: &C, path: &Path) -> Result<AnalysisOutcome, EngineError> {
-    let inspection = inspect_photo(path, 512)?;
+    let inspection = inspect_photo(path, 1024)?;
     let camera = inspection.metadata.camera.clone();
     let iso = inspection.metadata.iso;
     let image = postcritica_raster::encode_png(&inspection.thumb).map_err(EngineError::Raster)?;

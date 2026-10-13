@@ -135,6 +135,9 @@ struct Photo {
 /// Il report di un'analisi, pronto da mostrare.
 struct AnalysisReport {
     score: Option<i32>,
+    tecnica: Option<i32>,
+    composizione: Option<i32>,
+    messaggio: Option<i32>,
     tags: Vec<String>,
     strengths: Vec<String>,
     weaknesses: Vec<String>,
@@ -336,6 +339,9 @@ impl App {
             outcome.source_key.clone(),
             AnalysisReport {
                 score: outcome.report.score,
+                tecnica: outcome.report.tecnica,
+                composizione: outcome.report.composizione,
+                messaggio: outcome.report.messaggio,
                 tags: outcome.report.tag.clone(),
                 strengths: outcome.report.strengths.clone(),
                 weaknesses: outcome.report.weaknesses.clone(),
@@ -1218,6 +1224,14 @@ impl App {
                         .heading()
                         .color(tokens.score_colour(report.score)),
                 );
+                let part =
+                    |value: Option<i32>| value.map(|v| v.to_string()).unwrap_or_else(|| "—".to_string());
+                ui.weak(format!(
+                    "Tecnica {} · Composizione {} · Messaggio {}",
+                    part(report.tecnica),
+                    part(report.composizione),
+                    part(report.messaggio),
+                ));
                 ui.weak(format!("Modello: {}", report.model));
                 if let Some(summary) = &report.summary {
                     ui.add_space(4.0);

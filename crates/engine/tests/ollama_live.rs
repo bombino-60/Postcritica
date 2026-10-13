@@ -17,12 +17,13 @@ fn analyzes_a_real_photo_with_ollama() {
     let outcome = run_analysis(&critic, &path).expect("analisi con Ollama");
 
     println!(
-        "modello: {} | punteggio: {:?} | tag: {:?} | forze: {} | debolezze: {}",
+        "modello: {} | totale: {:?} | tecnica {} · composizione {} · messaggio {} | tag: {:?}",
         outcome.model,
         outcome.report.score,
+        outcome.report.tecnica.unwrap_or(-1),
+        outcome.report.composizione.unwrap_or(-1),
+        outcome.report.messaggio.unwrap_or(-1),
         outcome.report.tag,
-        outcome.report.strengths.len(),
-        outcome.report.weaknesses.len()
     );
 
     let _ = std::fs::remove_file(&path);

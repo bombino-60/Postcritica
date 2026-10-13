@@ -76,10 +76,19 @@ pub trait Critic {
 }
 
 /// Il report strutturato che il modello restituisce.
+///
+/// Il modello dà **tre giudizi separati** (tecnica, composizione, messaggio); il `score` finale lo
+/// calcoliamo qui con dei pesi, così il voto non si appiattisce su un unico numero tondo.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Report {
     #[serde(rename = "punteggio_totale", default)]
     pub score: Option<i32>,
+    #[serde(default)]
+    pub tecnica: Option<i32>,
+    #[serde(default)]
+    pub composizione: Option<i32>,
+    #[serde(default)]
+    pub messaggio: Option<i32>,
     #[serde(default)]
     pub tag: Vec<String>,
     #[serde(rename = "punti_di_forza", default)]
@@ -90,18 +99,45 @@ pub struct Report {
     pub sintesi: Option<String>,
 }
 
-/// Interpreta il report JSON. Un testo storto diventa un report vuoto, mai un panic.
-pub fn parse_report(json: &str) -> Report {
-    serde_json::from_str(json).unwrap_or_default()
+/// I pesi dei tre giudizi: tecnica 35 %, composizione 35 %, messaggio 30 %.
+const WEIGHT_TECNICA: f64 = 0.35;
+const WEIGHT_COMPOSIZIONE: f64 = 0.35;
+const WEIGHT_MESSAGGIO: f64 = 0.30;
+
+impl Report {
+    /// Il punteggio totale pesato dai tre giudizi; se mancano, resta quello del modello.
+    pub fn compute_total(&self) -> Option<i32> {
+        match (self.tecnica, self.composizione, self.messaggio) {
+            (Some(tecnica), Some(composizione), Some(messaggio)) => {
+                let total = f64::from(tecnica) * WEIGHT_TECNICA
+                    + f64::from(composizione) * WEIGHT_COMPOSIZIONE
+                    + f64::from(messaggio) * WEIGHT_MESSAGGIO;
+                Some(total.round().clamp(0.0, 100.0) as i32)
+            }
+            _ => self.score,
+        }
+    }
 }
 
-/// Il prompt inviato al modello, in italiano, con i campi attesi.
+/// Interpreta il report JSON e ne calcola il punteggio totale. Un testo storto diventa un report
+/// vuoto, mai un panic.
+pub fn parse_report(json: &str) -> Report {
+    let mut report: Report = serde_json::from_str(json).unwrap_or_default();
+    report.score = report.compute_total();
+    report
+}
+
+/// Il prompt inviato al modello, in italiano, con i campi attesi e una rubrica per i giudizi.
 pub fn build_prompt() -> String {
-    "Sei un critico fotografico esperto. Osserva la foto e rispondi SOLO con un oggetto JSON, senza \
-     testo attorno, con questi campi: \"punteggio_totale\" (numero intero da 0 a 100), \"tag\" (elenco di \
-     parole singole in italiano, con spazi e mai underscore, al massimo 12), \"punti_di_forza\" (elenco di \
-     frasi brevi), \"punti_di_debolezza\" (elenco di frasi brevi), \"sintesi\" (una frase). Valuta tecnica, \
-     composizione e messaggio. Rispondi in italiano."
+    "Sei un critico fotografico esperto e severo. Osserva la foto e rispondi SOLO con un oggetto JSON, \
+     senza testo attorno. Assegna TRE giudizi separati, ognuno un numero intero da 0 a 100, usando TUTTA \
+     la scala e senza appiattire: \"tecnica\" (fuoco, nitidezza, esposizione, rumore), \"composizione\" \
+     (inquadratura, equilibrio, linee, soggetto), \"messaggio\" (originalità, emozione, intento). \
+     Riferimenti: sotto 40 = problemi seri; 40-59 = mediocre; 60-74 = buono; 75-89 = molto buono; \
+     90-100 = eccellente e raro. Giudica ogni foto per quello che è e non dare a tutte lo stesso \
+     punteggio: una foto banale o difettosa deve stare sotto 60, una memorabile sopra 85. Poi aggiungi: \
+     \"tag\" (al massimo 12 parole singole in italiano, con spazi e mai underscore), \"punti_di_forza\" \
+     (frasi brevi), \"punti_di_debolezza\" (frasi brevi), \"sintesi\" (una frase). Rispondi in italiano."
         .to_string()
 }
 
@@ -153,13 +189,15 @@ pub fn report_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
         "properties": {
-            "punteggio_totale": { "type": "integer" },
+            "tecnica": { "type": "integer" },
+            "composizione": { "type": "integer" },
+            "messaggio": { "type": "integer" },
             "tag": { "type": "array", "items": { "type": "string" } },
             "punti_di_forza": { "type": "array", "items": { "type": "string" } },
             "punti_di_debolezza": { "type": "array", "items": { "type": "string" } },
             "sintesi": { "type": "string" }
         },
-        "required": ["punteggio_totale", "tag", "punti_di_forza", "punti_di_debolezza", "sintesi"]
+        "required": ["tecnica", "composizione", "messaggio", "tag", "punti_di_forza", "punti_di_debolezza", "sintesi"]
     })
 }
 
@@ -358,6 +396,19 @@ mod tests {
     fn a_broken_report_is_empty_not_a_panic() {
         assert_eq!(parse_report("testo spazzatura"), Report::default());
         assert_eq!(parse_report(""), Report::default());
+    }
+
+    #[test]
+    fn the_total_is_weighted_from_the_three_judgements() {
+        // 90*0.35 + 60*0.35 + 50*0.30 = 31.5 + 21 + 15 = 67.5 -> 68
+        let report = parse_report(
+            "{\"tecnica\": 90, \"composizione\": 60, \"messaggio\": 50, \
+             \"tag\": [], \"punti_di_forza\": [], \"punti_di_debolezza\": [], \"sintesi\": \"x\"}",
+        );
+        assert_eq!(report.score, Some(68));
+        assert_eq!(report.tecnica, Some(90));
+        assert_eq!(report.composizione, Some(60));
+        assert_eq!(report.messaggio, Some(50));
     }
 
     #[test]
