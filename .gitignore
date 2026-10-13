@@ -1,0 +1,34 @@
+# Build
+/target/
+**/target/
+
+# Archivio e dati locali: mai nel versionamento.
+*.db
+*.db-wal
+*.db-shm
+database/
+output/
+corpus/
+
+# Media scaricati o generati
+*.jpg
+*.jpeg
+*.png
+*.tif
+*.tiff
+*.cr2
+*.cr3
+*.nef
+*.arw
+*.orf
+*.raf
+*.rw2
+
+# Python del programma di riferimento non entra qui; ambiente locale:
+.venv/
+__pycache__/
+*.pyc
+
+# Sistema
+.DS_Store
+Thumbs.db

@@ -1,0 +1,11 @@
+[package]
+name = "photoinsight-ui-egui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Interfaccia desktop (egui/eframe) di PhotoInsight Critic."
+
+[dependencies]
+eframe = { workspace = true }
+photoinsight-engine = { workspace = true }

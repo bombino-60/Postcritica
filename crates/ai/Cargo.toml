@@ -1,0 +1,9 @@
+[package]
+name = "photoinsight-ai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Integrazione con i modelli (Ollama, OpenAI) di PhotoInsight Critic."
+
+[dependencies]

@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = [
+  "apps/photoinsight",
+  "crates/raster",
+  "crates/metadata",
+  "crates/analysis",
+  "crates/archive",
+  "crates/ai",
+  "crates/report",
+  "crates/engine",
+  "crates/ui-egui",
+  "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+photoinsight-raster = { path = "crates/raster" }
+photoinsight-metadata = { path = "crates/metadata" }
+photoinsight-analysis = { path = "crates/analysis" }
+photoinsight-archive = { path = "crates/archive" }
+photoinsight-ai = { path = "crates/ai" }
+photoinsight-report = { path = "crates/report" }
+photoinsight-engine = { path = "crates/engine" }
+photoinsight-ui-egui = { path = "crates/ui-egui" }
+
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow"] }
+log = "0.4"
+
+# Un panic sfuggito deve poter essere intercettato dalla rete di sicurezza, non abortire.
+[profile.release]
+panic = "unwind"

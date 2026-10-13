@@ -1,0 +1,10 @@
+[package]
+name = "photoinsight-analysis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Ispezione locale di un'immagine: profilo visivo e indicatori tecnici."
+
+[dependencies]
+photoinsight-raster = { workspace = true }

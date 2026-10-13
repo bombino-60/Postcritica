@@ -1,0 +1,6 @@
+# Consente unwrap/expect/panic/indicizzazione SOLO nei test, cosi' gli attributi
+# #![deny(...)] in cima alle crate restano severi sul codice di produzione.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true

@@ -1,0 +1,9 @@
+[package]
+name = "photoinsight-archive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Archivio delle analisi di PhotoInsight Critic (SQLite in arrivo)."
+
+[dependencies]
