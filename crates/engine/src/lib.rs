@@ -22,7 +22,7 @@ use postcritica_metadata::{self, MetadataError};
 use postcritica_raster::{self, RasterError};
 
 // Tipi condivisi ri-esportati, così il livello UI dipende solo dall'engine.
-pub use postcritica_ai::{OllamaCritic, Report};
+pub use postcritica_ai::{OllamaCritic, OpenAiCritic, Report};
 pub use postcritica_analysis::VisualProfile;
 pub use postcritica_archive::{AnalysisRecord, Archive, SqliteArchive};
 pub use postcritica_metadata::PhotoMetadata;

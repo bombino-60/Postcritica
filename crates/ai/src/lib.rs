@@ -222,6 +222,93 @@ impl Critic for OllamaCritic {
     }
 }
 
+/// Il client di OpenAI (ChatGPT) per l'analisi vision.
+#[derive(Debug, Clone)]
+pub struct OpenAiCritic {
+    pub url: String,
+    pub model: String,
+    pub key: String,
+}
+
+impl OpenAiCritic {
+    /// Un client con l'endpoint predefinito.
+    pub fn new(model: impl Into<String>, key: impl Into<String>) -> Self {
+        Self {
+            url: "https://api.openai.com/v1/chat/completions".to_string(),
+            model: model.into(),
+            key: key.into(),
+        }
+    }
+}
+
+impl Critic for OpenAiCritic {
+    fn analyze(&self, request: &AnalysisRequest) -> Result<AnalysisResponse, AiError> {
+        if self.key.trim().is_empty() {
+            return Err(AiError::Network("manca la chiave API di OpenAI".to_string()));
+        }
+        let mut content = vec![serde_json::json!({ "type": "text", "text": request.prompt })];
+        for image in &request.images {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(image);
+            content.push(serde_json::json!({
+                "type": "image_url",
+                "image_url": { "url": format!("data:image/png;base64,{encoded}"), "detail": "high" }
+            }));
+        }
+        let body = serde_json::json!({
+            "model": self.model,
+            "messages": [
+                { "role": "system", "content": "Sei un critico fotografico esperto." },
+                { "role": "user", "content": content }
+            ],
+            "response_format": { "type": "json_object" },
+            "max_completion_tokens": 1200
+        });
+        match ureq::post(&self.url)
+            .set("Authorization", &format!("Bearer {}", self.key))
+            .timeout(Duration::from_secs(600))
+            .send_json(&body)
+        {
+            Ok(response) => {
+                let value: serde_json::Value = response
+                    .into_json()
+                    .map_err(|e| AiError::BadResponse(e.to_string()))?;
+                let text = value
+                    .get("choices")
+                    .and_then(|choices| choices.get(0))
+                    .and_then(|choice| choice.get("message"))
+                    .and_then(|message| message.get("content"))
+                    .and_then(|content| content.as_str())
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                if text.is_empty() {
+                    return Err(AiError::BadResponse("OpenAI ha risposto vuoto".to_string()));
+                }
+                Ok(AnalysisResponse {
+                    model: self.model.clone(),
+                    json: text,
+                })
+            }
+            Err(ureq::Error::Status(code, response)) => {
+                let message = response.into_string().unwrap_or_default();
+                Err(classify_openai(code, &message))
+            }
+            Err(ureq::Error::Transport(transport)) => Err(AiError::Network(format!(
+                "non riesco a contattare OpenAI ({transport})"
+            ))),
+        }
+    }
+}
+
+/// Traduce una risposta HTTP di errore di OpenAI in un `AiError` parlante.
+fn classify_openai(code: u16, body: &str) -> AiError {
+    match code {
+        401 | 403 => AiError::Network("chiave API di OpenAI non valida".to_string()),
+        429 => AiError::Network("OpenAI ha risposto: troppe richieste".to_string()),
+        _ => AiError::Network(format!("OpenAI ha risposto {code}: {}", body.trim())),
+    }
+}
+
 /// Traduce una risposta HTTP di errore in un `AiError` parlante.
 fn classify_http(code: u16, body: &str, model: &str) -> AiError {
     let lower = body.to_ascii_lowercase();

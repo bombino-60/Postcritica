@@ -23,12 +23,14 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use eframe::egui;
 use postcritica_engine::{
     inspect_photo, rgba_bytes, run_analysis, AnalysisOutcome, AnalysisRecord, Archive, Inspection,
-    OllamaCritic, PhotoMetadata, Rgba8, SqliteArchive, VisualProfile,
+    OllamaCritic, OpenAiCritic, PhotoMetadata, Rgba8, SqliteArchive, VisualProfile,
 };
 use theme::Tokens;
 
 /// Il modello Ollama predefinito (come il programma Python).
 const DEFAULT_MODEL: &str = "gemma3:4b";
+/// Il modello OpenAI predefinito.
+const DEFAULT_OPENAI_MODEL: &str = "gpt-4o";
 /// Il file dell'archivio locale.
 const ARCHIVE_FILE: &str = "postcritica.db";
 
@@ -58,15 +60,17 @@ enum Module {
     Archive,
     Collections,
     Stats,
+    Setup,
 }
 
 impl Module {
-    const ALL: [Module; 5] = [
+    const ALL: [Module; 6] = [
         Module::Library,
         Module::Analysis,
         Module::Archive,
         Module::Collections,
         Module::Stats,
+        Module::Setup,
     ];
 
     fn label(self) -> &'static str {
@@ -76,6 +80,23 @@ impl Module {
             Self::Archive => "Archivio",
             Self::Collections => "Raccolte",
             Self::Stats => "Statistiche",
+            Self::Setup => "Setup",
+        }
+    }
+}
+
+/// Il provider di analisi scelto nel Setup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderChoice {
+    Ollama,
+    ChatGpt,
+}
+
+impl ProviderChoice {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Ollama => "ollama",
+            Self::ChatGpt => "chatgpt",
         }
     }
 }
@@ -116,6 +137,9 @@ struct App {
     analyzer: Option<Receiver<Msg>>,
     status: String,
     model: String,
+    provider: ProviderChoice,
+    openai_model: String,
+    api_key: String,
     module: Module,
     thumb_size: f32,
     folder: Option<String>,
@@ -139,13 +163,24 @@ impl App {
             Some(store) => format!("Pronto. Archivio: {ARCHIVE_FILE} ({} analisi).", store.count()),
             None => format!("Pronto, ma non riesco ad aprire l'archivio {ARCHIVE_FILE}."),
         };
+        let setting = |key: &str| archive.as_ref().and_then(|store| store.get_setting(key));
+        let provider = match setting("provider").as_deref() {
+            Some("chatgpt") => ProviderChoice::ChatGpt,
+            _ => ProviderChoice::Ollama,
+        };
+        let model = setting("ollama_model").unwrap_or_else(|| DEFAULT_MODEL.to_string());
+        let openai_model = setting("openai_model").unwrap_or_else(|| DEFAULT_OPENAI_MODEL.to_string());
+        let api_key = setting("openai_key").unwrap_or_default();
         Self {
             photos: Vec::new(),
             selected: None,
             reader: None,
             analyzer: None,
             status,
-            model: DEFAULT_MODEL.to_string(),
+            model,
+            provider,
+            openai_model,
+            api_key,
             module: Module::Library,
             thumb_size: 150.0,
             folder: None,
@@ -263,15 +298,22 @@ impl App {
 
     /// Avvia l'analisi di un file, in un thread separato.
     fn analyze_path(&mut self, ctx: &egui::Context, path: PathBuf, name: String) {
-        let model = self.model.clone();
+        let provider = self.provider;
+        let (model, key) = match provider {
+            ProviderChoice::Ollama => (self.model.clone(), String::new()),
+            ProviderChoice::ChatGpt => (self.openai_model.clone(), self.api_key.clone()),
+        };
         let (sender, receiver) = mpsc::channel();
         self.analyzer = Some(receiver);
         self.analyzing = true;
         self.status = format!("Analizzo {name} con {model}… (può richiedere qualche minuto)");
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let critic = OllamaCritic::new(model);
-            match run_analysis(&critic, &path) {
+            let outcome = match provider {
+                ProviderChoice::Ollama => run_analysis(&OllamaCritic::new(model), &path),
+                ProviderChoice::ChatGpt => run_analysis(&OpenAiCritic::new(model, key), &path),
+            };
+            match outcome {
                 Ok(outcome) => {
                     let _ = sender.send(Msg::Analyzed(Box::new(outcome)));
                 }
@@ -693,6 +735,81 @@ impl App {
         }
     }
 
+    /// Salva le impostazioni nell'archivio.
+    fn persist(&self) {
+        if let Some(store) = &self.archive {
+            let _ = store.set_setting("provider", self.provider.key());
+            let _ = store.set_setting("ollama_model", &self.model);
+            let _ = store.set_setting("openai_model", &self.openai_model);
+            let _ = store.set_setting("openai_key", &self.api_key);
+        }
+    }
+
+    /// Il modulo Setup: provider, modelli e chiave.
+    fn setup_view(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Setup");
+        ui.separator();
+        ui.strong("Provider di analisi");
+        ui.horizontal(|ui| {
+            if ui
+                .selectable_label(self.provider == ProviderChoice::Ollama, "Ollama (locale)")
+                .clicked()
+            {
+                self.provider = ProviderChoice::Ollama;
+                self.persist();
+            }
+            if ui
+                .selectable_label(self.provider == ProviderChoice::ChatGpt, "ChatGPT (OpenAI)")
+                .clicked()
+            {
+                self.provider = ProviderChoice::ChatGpt;
+                self.persist();
+            }
+        });
+        ui.add_space(10.0);
+        ui.strong("Ollama");
+        ui.horizontal(|ui| {
+            ui.label("Modello:");
+            if ui
+                .add(egui::TextEdit::singleline(&mut self.model).desired_width(200.0))
+                .lost_focus()
+            {
+                self.persist();
+            }
+        });
+        ui.add_space(10.0);
+        ui.strong("ChatGPT (OpenAI)");
+        ui.horizontal(|ui| {
+            ui.label("Modello:");
+            if ui
+                .add(egui::TextEdit::singleline(&mut self.openai_model).desired_width(180.0))
+                .lost_focus()
+            {
+                self.persist();
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("Chiave API:");
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.api_key)
+                        .password(true)
+                        .desired_width(260.0),
+                )
+                .lost_focus()
+            {
+                self.persist();
+            }
+        });
+        ui.add_space(8.0);
+        if ui.button("Salva impostazioni").clicked() {
+            self.persist();
+            self.status = "Impostazioni salvate.".to_string();
+        }
+        ui.add_space(10.0);
+        ui.weak("La chiave resta nell'archivio locale (postcritica.db), non viene mostrata altrove.");
+    }
+
     fn inspector(&self, ui: &mut egui::Ui) {
         let Some(photo) = self.selected.and_then(|index| self.photos.get(index)) else {
             ui.add_space(6.0);
@@ -988,6 +1105,7 @@ impl eframe::App for App {
                 Module::Archive => self.archive_view(ui),
                 Module::Stats => self.stats_view(ui),
                 Module::Collections => self.collections_view(ui),
+                Module::Setup => self.setup_view(ui),
             });
     }
 }
@@ -1139,6 +1257,14 @@ fn draw_module_icon(painter: &egui::Painter, rect: egui::Rect, colour: egui::Col
                     egui::pos2(left + width, rect.max.y),
                 );
                 painter.rect_filled(bar, 1.0, colour);
+            }
+        }
+        Module::Setup => {
+            for i in 0..2 {
+                let y = rect.min.y + (i as f32 + 0.5) * rect.height() / 2.0;
+                painter.line_segment([egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)], stroke);
+                let knob = rect.min.x + rect.width() * if i == 0 { 0.35 } else { 0.65 };
+                painter.circle_filled(egui::pos2(knob, y), 2.0, colour);
             }
         }
     }

@@ -126,6 +126,10 @@ impl SqliteArchive {
                     camera TEXT,
                     iso INTEGER,
                     rating INTEGER
+                );
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
                 );",
             )
             .map_err(backend)?;
@@ -139,6 +143,26 @@ impl SqliteArchive {
         let _ = self
             .conn
             .execute("ALTER TABLE analyses ADD COLUMN rating INTEGER", []);
+        Ok(())
+    }
+
+    /// Legge un'impostazione.
+    pub fn get_setting(&self, key: &str) -> Option<String> {
+        self.conn
+            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
+                row.get::<_, String>(0)
+            })
+            .ok()
+    }
+
+    /// Scrive un'impostazione.
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<(), ArchiveError> {
+        self.conn
+            .execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                rusqlite::params![key, value],
+            )
+            .map_err(backend)?;
         Ok(())
     }
 
