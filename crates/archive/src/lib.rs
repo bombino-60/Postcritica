@@ -28,6 +28,10 @@ pub struct AnalysisRecord {
     pub model: Option<String>,
     /// Il report completo, così come l'ha restituito il modello.
     pub report_json: String,
+    /// La fotocamera usata (per le statistiche).
+    pub camera: Option<String>,
+    /// Gli ISO dello scatto (per le statistiche).
+    pub iso: Option<u32>,
 }
 
 impl AnalysisRecord {
@@ -41,6 +45,8 @@ impl AnalysisRecord {
             tags: Vec::new(),
             model: None,
             report_json: String::new(),
+            camera: None,
+            iso: None,
         }
     }
 }
@@ -83,7 +89,7 @@ fn backend(error: rusqlite::Error) -> ArchiveError {
 }
 
 /// Le colonne lette, sempre nello stesso ordine.
-const COLUMNS: &str = "id, file_name, source_key, score, tags, model, report_json";
+const COLUMNS: &str = "id, file_name, source_key, score, tags, model, report_json, camera, iso";
 
 /// L'archivio su un file SQLite.
 pub struct SqliteArchive {
@@ -110,10 +116,20 @@ impl SqliteArchive {
                     score INTEGER,
                     tags TEXT NOT NULL DEFAULT '[]',
                     model TEXT,
-                    report_json TEXT NOT NULL DEFAULT ''
+                    report_json TEXT NOT NULL DEFAULT '',
+                    camera TEXT,
+                    iso INTEGER
                 );",
             )
-            .map_err(backend)
+            .map_err(backend)?;
+        // Colonne aggiunte dopo la prima versione: idempotente, l'errore "esiste già" si ignora.
+        let _ = self
+            .conn
+            .execute("ALTER TABLE analyses ADD COLUMN camera TEXT", []);
+        let _ = self
+            .conn
+            .execute("ALTER TABLE analyses ADD COLUMN iso INTEGER", []);
+        Ok(())
     }
 
     fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<AnalysisRecord> {
@@ -126,6 +142,8 @@ impl SqliteArchive {
             tags: serde_json::from_str(&tags_json).unwrap_or_default(),
             model: row.get(5)?,
             report_json: row.get(6)?,
+            camera: row.get(7)?,
+            iso: row.get(8)?,
         })
     }
 }
@@ -135,21 +153,25 @@ impl Archive for SqliteArchive {
         let tags = serde_json::to_string(&record.tags).map_err(|e| ArchiveError::Backend(e.to_string()))?;
         self.conn
             .execute(
-                "INSERT INTO analyses (file_name, source_key, score, tags, model, report_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "INSERT INTO analyses (file_name, source_key, score, tags, model, report_json, camera, iso)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(source_key) DO UPDATE SET
                     file_name = excluded.file_name,
                     score = excluded.score,
                     tags = excluded.tags,
                     model = excluded.model,
-                    report_json = excluded.report_json",
+                    report_json = excluded.report_json,
+                    camera = excluded.camera,
+                    iso = excluded.iso",
                 rusqlite::params![
                     record.file_name,
                     record.source_key,
                     record.score,
                     tags,
                     record.model,
-                    record.report_json
+                    record.report_json,
+                    record.camera,
+                    record.iso
                 ],
             )
             .map_err(backend)?;

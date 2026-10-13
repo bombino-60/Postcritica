@@ -60,6 +60,10 @@ pub struct AnalysisOutcome {
     pub model: String,
     pub report_json: String,
     pub report: Report,
+    /// La fotocamera letta dai metadati (per le statistiche).
+    pub camera: Option<String>,
+    /// Gli ISO letti dai metadati (per le statistiche).
+    pub iso: Option<u32>,
 }
 
 /// Esegue l'analisi di una foto **senza** toccare l'archivio: ispeziona, chiede al modello, interpreta.
@@ -68,6 +72,8 @@ pub struct AnalysisOutcome {
 /// principale (la connessione SQLite non si sposta fra thread).
 pub fn run_analysis<C: Critic>(critic: &C, path: &Path) -> Result<AnalysisOutcome, EngineError> {
     let inspection = inspect_photo(path, 512)?;
+    let camera = inspection.metadata.camera.clone();
+    let iso = inspection.metadata.iso;
     let image = postcritica_raster::encode_png(&inspection.thumb).map_err(EngineError::Raster)?;
     let request = AnalysisRequest {
         prompt: postcritica_ai::build_prompt(),
@@ -85,6 +91,8 @@ pub fn run_analysis<C: Critic>(critic: &C, path: &Path) -> Result<AnalysisOutcom
         model: response.model,
         report_json: response.json,
         report,
+        camera,
+        iso,
     })
 }
 
@@ -100,6 +108,8 @@ pub fn analyze_photo<A: Archive, C: Critic>(
     record.tags = outcome.report.tag;
     record.model = Some(outcome.model);
     record.report_json = outcome.report_json;
+    record.camera = outcome.camera;
+    record.iso = outcome.iso;
 
     let id = archive.save(record).map_err(EngineError::Archive)?;
     archive.get(id).map_err(EngineError::Archive)

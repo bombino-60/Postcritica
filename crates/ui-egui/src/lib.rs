@@ -2,7 +2,7 @@
 //!
 //! Il layout segue il riferimento LightCraft: barra dei menu in alto, pannello **Libreria** a sinistra,
 //! **griglia** al centro, pannello **Analisi** a destra, una striscia di **moduli** all'estrema destra e
-//! una **barra** in basso. La veste grafica usa la palette scura dell'app di riferimento.
+//! una **barra** in basso. Colori e misure vengono dal modulo [`theme`], copiati dal riferimento.
 
 #![forbid(unsafe_code)]
 #![deny(
@@ -14,6 +14,8 @@
     clippy::unreachable
 )]
 
+mod theme;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -23,6 +25,7 @@ use postcritica_engine::{
     inspect_photo, rgba_bytes, run_analysis, AnalysisOutcome, AnalysisRecord, Archive, Inspection,
     OllamaCritic, PhotoMetadata, Rgba8, SqliteArchive, VisualProfile,
 };
+use theme::Tokens;
 
 /// Il modello Ollama predefinito (come il programma Python).
 const DEFAULT_MODEL: &str = "gemma3:4b";
@@ -41,7 +44,7 @@ pub fn run() -> eframe::Result<()> {
         "Postcritica",
         options,
         Box::new(|cc| {
-            apply_theme(&cc.egui_ctx);
+            theme::apply(&cc.egui_ctx);
             Ok(Box::new(App::new(cc)))
         }),
     )
@@ -80,7 +83,6 @@ impl Module {
 /// Una foto mostrata nella griglia.
 struct Photo {
     name: String,
-    /// Il file sul disco; `None` per le immagini della demo.
     path: Option<PathBuf>,
     thumb: egui::TextureHandle,
     inspection: Inspection,
@@ -143,7 +145,6 @@ impl App {
         }
     }
 
-    /// Raccoglie i messaggi dei thread e aggiorna lo stato.
     fn drain(&mut self, ctx: &egui::Context) {
         let mut messages = Vec::new();
         let mut reader_done = false;
@@ -195,7 +196,6 @@ impl App {
         }
     }
 
-    /// Salva l'analisi nell'archivio e la rende visibile.
     fn store_outcome(&mut self, outcome: AnalysisOutcome) {
         if let Some(store) = &mut self.archive {
             let mut record = AnalysisRecord::new(outcome.file_name.clone(), outcome.source_key.clone());
@@ -203,6 +203,8 @@ impl App {
             record.tags = outcome.report.tag.clone();
             record.model = Some(outcome.model.clone());
             record.report_json = outcome.report_json.clone();
+            record.camera = outcome.camera.clone();
+            record.iso = outcome.iso;
             if let Err(error) = store.save(record) {
                 self.status = format!("{error}");
             }
@@ -311,7 +313,6 @@ impl App {
         photo.path.as_ref().map(|path| path.to_string_lossy().to_string())
     }
 
-    /// I tag più frequenti fra i report, con il loro conteggio.
     fn tag_counts(&self) -> Vec<(String, usize)> {
         let mut counts: HashMap<String, usize> = HashMap::new();
         for report in self.reports.values() {
@@ -324,7 +325,6 @@ impl App {
         list
     }
 
-    /// La griglia delle foto, raggruppate per giorno di scatto.
     fn library(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.heading("Tutte le foto");
@@ -371,7 +371,6 @@ impl App {
         }
     }
 
-    /// L'elenco delle analisi salvate nell'archivio.
     fn archive_view(&self, ui: &mut egui::Ui) {
         let records = self
             .archive
@@ -386,9 +385,10 @@ impl App {
         });
         ui.separator();
         if records.is_empty() {
-            ui.label("Nessuna analisi salvata. Apri una foto e premi «Analizza».");
+            ui.label("Nessuna analisi salvata. Apri una foto e premi «Analizza con Ollama».");
             return;
         }
+        let tokens = Tokens::get(ui.ctx());
         egui::ScrollArea::vertical().show(ui, |ui| {
             for record in &records {
                 ui.horizontal(|ui| {
@@ -399,9 +399,12 @@ impl App {
                     ui.label(
                         egui::RichText::new(format!("{score:>3}"))
                             .strong()
-                            .color(score_colour(record.score)),
+                            .color(tokens.score_colour(record.score)),
                     );
                     ui.label(&record.file_name);
+                    if let Some(camera) = &record.camera {
+                        ui.weak(camera);
+                    }
                 });
                 ui.weak(record.tags.join(" · "));
                 ui.separator();
@@ -409,7 +412,52 @@ impl App {
         });
     }
 
-    /// Il pannello di destra: metadati, profilo visivo e report della foto scelta.
+    /// Le statistiche fotografiche, con i grafici (come il programma Python).
+    fn stats_view(&self, ui: &mut egui::Ui) {
+        let records = self
+            .archive
+            .as_ref()
+            .and_then(|store| store.history().ok())
+            .unwrap_or_default();
+        ui.horizontal(|ui| {
+            ui.heading("Statistiche fotografiche");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.weak(format!("{} foto analizzate", records.len()));
+            });
+        });
+        ui.separator();
+        if records.is_empty() {
+            ui.label("Nessuna analisi. Analizza qualche foto per vedere le statistiche.");
+            return;
+        }
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            let tokens = Tokens::get(ui.ctx());
+            ui.add_space(6.0);
+            ui.strong("Distribuzione dei punteggi");
+            bar_chart(ui, &score_buckets(&records), tokens.accent);
+
+            ui.add_space(14.0);
+            ui.strong("Fotocamere più usate");
+            bar_chart(
+                ui,
+                &top_values(records.iter().filter_map(|r| r.camera.clone()), 8),
+                tokens.accent,
+            );
+
+            ui.add_space(14.0);
+            ui.strong("Distribuzione ISO");
+            bar_chart(ui, &iso_buckets(&records), tokens.accent);
+
+            ui.add_space(14.0);
+            ui.strong("Generi e tag più frequenti");
+            bar_chart(
+                ui,
+                &top_values(records.iter().flat_map(|r| r.tags.clone()), 12),
+                tokens.accent,
+            );
+        });
+    }
+
     fn inspector(&self, ui: &mut egui::Ui) {
         let Some(photo) = self.selected.and_then(|index| self.photos.get(index)) else {
             ui.add_space(6.0);
@@ -452,6 +500,7 @@ impl App {
         ui.separator();
         ui.strong("Valutazione");
 
+        let tokens = Tokens::get(ui.ctx());
         let report = self.selected_key().and_then(|key| self.reports.get(&key));
         match report {
             Some(report) => {
@@ -462,7 +511,7 @@ impl App {
                 ui.label(
                     egui::RichText::new(format!("Punteggio: {score} / 100"))
                         .heading()
-                        .color(score_colour(report.score)),
+                        .color(tokens.score_colour(report.score)),
                 );
                 ui.weak(format!("Modello: {}", report.model));
                 if let Some(summary) = &report.summary {
@@ -474,8 +523,8 @@ impl App {
                     ui.label(egui::RichText::new("Tag").strong());
                     ui.label(report.tags.join(" · "));
                 }
-                list(ui, "Punti di forza", &report.strengths, true);
-                list(ui, "Punti di debolezza", &report.weaknesses, false);
+                list(ui, "Punti di forza", &report.strengths, true, tokens);
+                list(ui, "Punti di debolezza", &report.weaknesses, false, tokens);
             }
             None => {
                 ui.weak("Nessuna analisi. Premi «Analizza con Ollama».");
@@ -487,11 +536,10 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        let tokens = Tokens::get(&ctx);
         self.drain(&ctx);
 
-        // La richiesta di analisi arriva dal pannello di destra: la leggo qui, dove ho `&mut self`.
-        let requested = ui
-            .ctx()
+        let requested = ctx
             .data_mut(|data| data.remove_temp::<bool>(egui::Id::new("analizza")))
             .unwrap_or(false);
         if requested {
@@ -499,7 +547,6 @@ impl eframe::App for App {
         }
 
         egui::Panel::top("menu").show(ui, |ui| {
-            ui.add_space(3.0);
             ui.horizontal(|ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("Apri cartella…").clicked() {
@@ -530,28 +577,27 @@ impl eframe::App for App {
                     ui.add(egui::TextEdit::singleline(&mut self.model).desired_width(150.0));
                 });
             });
-            ui.add_space(3.0);
         });
 
-        egui::Panel::bottom("barra").show(ui, |ui| {
-            ui.add_space(3.0);
-            ui.horizontal(|ui| {
-                ui.weak("Dimensione miniature");
-                ui.add(egui::Slider::new(&mut self.thumb_size, 90.0..=280.0).show_value(false));
-                ui.separator();
-                for _ in 0..5 {
-                    ui.label(egui::RichText::new("★").color(egui::Color32::from_rgb(0x3a, 0x42, 0x4e)));
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.weak(&self.status);
+        egui::Panel::bottom("barra")
+            .size_range(egui::Rangef::new(28.0, 40.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.weak("Dimensione miniature");
+                    ui.add(egui::Slider::new(&mut self.thumb_size, 90.0..=280.0).show_value(false));
+                    ui.separator();
+                    for _ in 0..5 {
+                        ui.label(egui::RichText::new("★").color(tokens.text_disabled));
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.weak(&self.status);
+                    });
                 });
             });
-            ui.add_space(3.0);
-        });
 
         egui::Panel::left("libreria")
-            .default_size(248.0)
-            .min_size(190.0)
+            .default_size(tokens.panel_w)
+            .size_range(egui::Rangef::new(200.0, 340.0))
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.add_space(4.0);
@@ -608,19 +654,21 @@ impl eframe::App for App {
                 });
             });
 
-        egui::Panel::right("moduli").exact_size(42.0).show(ui, |ui| {
-            ui.add_space(6.0);
-            for module in Module::ALL {
-                if module_button(ui, self.module == module, module).clicked() {
-                    self.module = module;
+        egui::Panel::right("moduli")
+            .exact_size(tokens.strip_w)
+            .show(ui, |ui| {
+                ui.add_space(6.0);
+                for module in Module::ALL {
+                    if module_button(ui, self.module == module, module, tokens).clicked() {
+                        self.module = module;
+                    }
+                    ui.add_space(4.0);
                 }
-                ui.add_space(4.0);
-            }
-        });
+            });
 
         egui::Panel::right("pannello")
-            .min_size(300.0)
             .default_size(340.0)
+            .size_range(egui::Rangef::new(300.0, 460.0))
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.add_space(4.0);
@@ -628,70 +676,118 @@ impl eframe::App for App {
                 });
             });
 
-        egui::CentralPanel::default().show(ui, |ui| match self.module {
-            Module::Library | Module::Analysis => self.library(ui),
-            Module::Archive => self.archive_view(ui),
-            Module::Collections => placeholder(
-                ui,
-                "Raccolte",
-                "Le raccolte manuali e la ricerca semantica arriveranno qui.",
-            ),
-            Module::Stats => placeholder(ui, "Statistiche", "I grafici di distribuzione arriveranno qui."),
+        let frame = egui::Frame::default()
+            .fill(tokens.grid_bg)
+            .inner_margin(egui::Margin::same(8));
+        egui::CentralPanel::default()
+            .frame(frame)
+            .show(ui, |ui| match self.module {
+                Module::Library | Module::Analysis => self.library(ui),
+                Module::Archive => self.archive_view(ui),
+                Module::Stats => self.stats_view(ui),
+                Module::Collections => placeholder(
+                    ui,
+                    "Raccolte",
+                    "Le raccolte manuali e la ricerca semantica arriveranno qui.",
+                ),
+            });
+    }
+}
+
+/// Un grafico a barre orizzontali con etichette e conteggi.
+fn bar_chart(ui: &mut egui::Ui, data: &[(String, usize)], colour: egui::Color32) {
+    if data.is_empty() {
+        ui.weak("(nessun dato)");
+        return;
+    }
+    let max = data.iter().map(|(_, value)| *value).max().unwrap_or(1).max(1);
+    let tokens = Tokens::get(ui.ctx());
+    for (label, value) in data {
+        ui.horizontal(|ui| {
+            ui.add_sized(
+                [190.0, 18.0],
+                egui::Label::new(egui::RichText::new(label).color(tokens.text_label)),
+            );
+            let width = (*value as f32 / max as f32) * 260.0;
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(262.0, 16.0), egui::Sense::hover());
+            let bar = egui::Rect::from_min_size(rect.min, egui::vec2(width.max(2.0), rect.height()));
+            ui.painter().rect_filled(bar, 2.0, colour);
+            ui.weak(value.to_string());
         });
     }
 }
 
-/// Applica la palette scura dell'app di riferimento.
-fn apply_theme(ctx: &egui::Context) {
-    let background = egui::Color32::from_rgb(0x0b, 0x0d, 0x10);
-    let panel = egui::Color32::from_rgb(0x13, 0x17, 0x1c);
-    let line = egui::Color32::from_rgb(0x2a, 0x32, 0x3d);
-    let text = egui::Color32::from_rgb(0xed, 0xf1, 0xf5);
-    let muted = egui::Color32::from_rgb(0x92, 0x9c, 0xa8);
-    let blue = egui::Color32::from_rgb(0x5d, 0xa9, 0xff);
-    let raised = egui::Color32::from_rgb(0x1a, 0x1f, 0x26);
-    let hovered = egui::Color32::from_rgb(0x24, 0x2b, 0x35);
+/// I punteggi in dieci fasce.
+fn score_buckets(records: &[AnalysisRecord]) -> Vec<(String, usize)> {
+    let mut buckets: Vec<(String, usize)> = (0..10)
+        .map(|i| (format!("{}–{}", i * 10, i * 10 + 9), 0))
+        .collect();
+    for record in records {
+        if let Some(score) = record.score {
+            let index = (score.clamp(0, 100) / 10).min(9) as usize;
+            buckets[index].1 += 1;
+        }
+    }
+    buckets
+}
 
-    let mut visuals = egui::Visuals::dark();
-    visuals.panel_fill = panel;
-    visuals.window_fill = panel;
-    visuals.extreme_bg_color = background;
-    visuals.override_text_color = Some(text);
-    visuals.window_stroke = egui::Stroke::new(1.0, line);
-    visuals.hyperlink_color = blue;
-    visuals.selection.bg_fill = blue;
-    visuals.selection.stroke = egui::Stroke::new(1.0, text);
-    visuals.widgets.noninteractive.bg_fill = panel;
-    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, line);
-    visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, muted);
-    visuals.widgets.inactive.weak_bg_fill = raised;
-    visuals.widgets.inactive.bg_fill = raised;
-    visuals.widgets.hovered.weak_bg_fill = hovered;
-    visuals.widgets.hovered.bg_fill = hovered;
-    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, blue);
-    visuals.widgets.active.weak_bg_fill = blue;
-    visuals.widgets.active.bg_fill = blue;
-    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, blue);
-    ctx.set_visuals(visuals);
+/// Gli ISO in quattro fasce.
+fn iso_buckets(records: &[AnalysisRecord]) -> Vec<(String, usize)> {
+    let ranges = [
+        ("fino a 200", 0u32, 200u32),
+        ("201–800", 201, 800),
+        ("801–3200", 801, 3200),
+        ("oltre 3200", 3201, u32::MAX),
+    ];
+    let mut buckets: Vec<(String, usize)> = ranges
+        .iter()
+        .map(|(label, _, _)| (label.to_string(), 0))
+        .collect();
+    for record in records {
+        if let Some(iso) = record.iso {
+            for (index, (_, low, high)) in ranges.iter().enumerate() {
+                if iso >= *low && iso <= *high {
+                    buckets[index].1 += 1;
+                    break;
+                }
+            }
+        }
+    }
+    buckets
+}
+
+/// I valori più frequenti di una serie, in ordine decrescente.
+fn top_values(values: impl Iterator<Item = String>, limit: usize) -> Vec<(String, usize)> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for value in values {
+        let trimmed = value.trim().to_string();
+        if !trimmed.is_empty() {
+            *counts.entry(trimmed).or_insert(0) += 1;
+        }
+    }
+    let mut list: Vec<(String, usize)> = counts.into_iter().collect();
+    list.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    list.truncate(limit);
+    list
+}
+
+fn placeholder(ui: &mut egui::Ui, title: &str, note: &str) {
+    ui.add_space(6.0);
+    ui.heading(title);
+    ui.separator();
+    ui.weak(note);
 }
 
 /// Un pulsante quadrato della striscia dei moduli, con l'icona disegnata in codice (lavoro originale).
-fn module_button(ui: &mut egui::Ui, selected: bool, module: Module) -> egui::Response {
+fn module_button(ui: &mut egui::Ui, selected: bool, module: Module, tokens: Tokens) -> egui::Response {
     let size = egui::vec2(34.0, 34.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-    let visuals = ui.visuals().clone();
     let (bg, colour) = if selected {
-        (visuals.selection.bg_fill, egui::Color32::WHITE)
+        (tokens.accent.gamma_multiply(0.8), tokens.text)
     } else if response.hovered() {
-        (
-            visuals.widgets.hovered.bg_fill,
-            visuals.widgets.hovered.fg_stroke.color,
-        )
+        (tokens.hover, tokens.thumb_hover)
     } else {
-        (
-            egui::Color32::TRANSPARENT,
-            visuals.widgets.inactive.fg_stroke.color,
-        )
+        (egui::Color32::TRANSPARENT, tokens.icon)
     };
     if bg != egui::Color32::TRANSPARENT {
         ui.painter().rect_filled(rect, 4.0, bg);
@@ -700,7 +796,6 @@ fn module_button(ui: &mut egui::Ui, selected: bool, module: Module) -> egui::Res
     response.on_hover_text(module.label())
 }
 
-/// Disegna l'icona di un modulo con semplici tratti.
 fn draw_module_icon(painter: &egui::Painter, rect: egui::Rect, colour: egui::Color32, module: Module) {
     let stroke = egui::Stroke::new(1.5, colour);
     match module {
@@ -758,39 +853,18 @@ fn draw_module_icon(painter: &egui::Painter, rect: egui::Rect, colour: egui::Col
     }
 }
 
-fn placeholder(ui: &mut egui::Ui, title: &str, note: &str) {
-    ui.add_space(6.0);
-    ui.heading(title);
-    ui.separator();
-    ui.weak(note);
-}
-
-fn score_colour(score: Option<i32>) -> egui::Color32 {
-    match score {
-        Some(value) if value >= 75 => egui::Color32::from_rgb(0x54, 0xc9, 0x85),
-        Some(value) if value >= 50 => egui::Color32::from_rgb(0xe8, 0xb6, 0x5a),
-        Some(_) => egui::Color32::from_rgb(0xef, 0x6a, 0x68),
-        None => egui::Color32::from_rgb(0x92, 0x9c, 0xa8),
-    }
-}
-
-fn list(ui: &mut egui::Ui, title: &str, items: &[String], positive: bool) {
+fn list(ui: &mut egui::Ui, title: &str, items: &[String], positive: bool, tokens: Tokens) {
     if items.is_empty() {
         return;
     }
     ui.add_space(4.0);
     ui.label(egui::RichText::new(title).strong());
-    let colour = if positive {
-        egui::Color32::from_rgb(0x54, 0xc9, 0x85)
-    } else {
-        egui::Color32::from_rgb(0xef, 0x6a, 0x68)
-    };
+    let colour = if positive { tokens.positive } else { tokens.reject };
     for item in items {
         ui.label(egui::RichText::new(format!("• {item}")).color(colour));
     }
 }
 
-/// Il giorno di scatto, per raggruppare la griglia.
 fn photo_day(photo: &Photo) -> String {
     match photo.inspection.metadata.shot_at.as_deref() {
         Some(value) if value.chars().count() >= 10 => value.chars().take(10).collect(),
@@ -800,6 +874,7 @@ fn photo_day(photo: &Photo) -> String {
 }
 
 fn thumbnail(ui: &mut egui::Ui, photo: &Photo, selected: bool, size: f32) -> egui::Response {
+    let tokens = Tokens::get(ui.ctx());
     let target = egui::vec2(size, size * 0.72);
     let image = egui::Image::new(&photo.thumb)
         .fit_to_exact_size(target)
@@ -809,7 +884,7 @@ fn thumbnail(ui: &mut egui::Ui, photo: &Photo, selected: bool, size: f32) -> egu
         ui.painter().rect_stroke(
             response.rect,
             3.0,
-            egui::Stroke::new(2.5, egui::Color32::from_rgb(0x5d, 0xa9, 0xff)),
+            egui::Stroke::new(2.5, tokens.accent),
             egui::StrokeKind::Inside,
         );
     }
